@@ -1,0 +1,72 @@
+"""Investigation Service configuration."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    service_name: str = "investigation-service"
+    environment: str = "local"
+    log_level: str = "INFO"
+    version: str = "0.4.1"
+    prompt_version: str = "rca-v1"
+
+    host: str = "0.0.0.0"
+    port: int = 8031
+
+    database_url: str = (
+        "postgresql+asyncpg://sre:sre@postgres:5432/sre_incidents"
+    )
+    database_url_sync: str = (
+        "postgresql+psycopg2://sre:sre@postgres:5432/sre_incidents"
+    )
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_echo: bool = False
+    run_migrations_on_startup: bool = True
+
+    context_service_url: str = "http://context-service:8020"
+    knowledge_service_url: str = "http://knowledge-service:8030"
+    incident_service_url: str = "http://incident-service:8000"
+    model_gateway_url: str = "http://model-gateway:8040"
+
+    llm_model: str = "llama3.2"
+    llm_timeout_seconds: float = 60.0
+    llm_enabled: bool = True
+
+    redis_url: str = "redis://redis:6379/0"
+    cache_enabled: bool = True
+    context_cache_ttl_seconds: int = 120
+
+    http_retries: int = 3
+    http_backoff_base: float = 0.5
+    http_timeout_seconds: float = 30.0
+
+    auto_collect_context_if_missing: bool = True
+    citation_required: bool = True
+
+    # Deprecated aliases — prefer LLM_* / MODEL_GATEWAY_URL
+    ollama_model: str | None = None
+    ollama_enabled: bool | None = None
+    ollama_timeout_seconds: float | None = None
+
+    @model_validator(mode="after")
+    def _apply_legacy_aliases(self) -> Settings:
+        if self.ollama_model:
+            self.llm_model = self.ollama_model
+        if self.ollama_enabled is not None:
+            self.llm_enabled = self.ollama_enabled
+        if self.ollama_timeout_seconds is not None:
+            self.llm_timeout_seconds = self.ollama_timeout_seconds
+        return self
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

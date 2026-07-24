@@ -1,0 +1,254 @@
+# Default values — cost-aware local / staging sizing
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  imageRegistry: ""
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  labels:
+    app.kubernetes.io/part-of: ai-sre-copilot
+    ai-sre-copilot.phase: "8"
+
+namespace:
+  create: true
+  name: ai-sre-copilot
+
+# Shared secret material (override via --set / sealed-secrets / ExternalSecrets)
+secrets:
+  create: true
+  jwtSecret: "change-me-phase7-local-secret-min-32-chars!!"
+  internalServiceToken: "local-internal-service-token"
+  postgresPassword: "sre"
+  authUsers: "admin:admin123:admin,operator:operator123:operator,viewer:viewer123:viewer"
+
+config:
+  jwtIssuer: ai-sre-copilot
+  authEnabled: "true"
+  otelTracesExporter: otlp
+  otelExporterOtlpEndpoint: http://otel-collector:4317
+  postgresHost: postgres
+  postgresUser: sre
+  postgresDb: sre_incidents
+  environment: staging
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "8m"
+  hosts:
+    - host: sre.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: executive-dashboard
+          port: 8050
+        - path: /api/auth
+          pathType: Prefix
+          service: auth-service
+          port: 8060
+        - path: /api/incidents
+          pathType: Prefix
+          service: incident-service
+          port: 8000
+  tls: []
+
+networkPolicy:
+  enabled: true
+
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+redis:
+  enabled: true
+  image: redis:7.4-alpine
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+apps:
+  auth-service:
+    enabled: true
+    replicaCount: 2
+    image: ai-sre-copilot/auth-service:phase7
+    port: 8060
+    probes:
+      path: /ready
+    resources:
+      requests: { cpu: 25m, memory: 64Mi }
+      limits: { cpu: 200m, memory: 256Mi }
+    hpa:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+    env:
+      SERVICE_NAME: auth-service
+
+  incident-service:
+    enabled: true
+    replicaCount: 2
+    image: ai-sre-copilot/incident-service:phase2
+    port: 8000
+    probes:
+      path: /ready
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+    hpa:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 8
+      targetCPUUtilizationPercentage: 70
+    env:
+      SERVICE_NAME: incident-service
+      RUN_MIGRATIONS_ON_STARTUP: "true"
+      CONTEXT_SERVICE_ENABLED: "true"
+
+  context-service:
+    enabled: true
+    replicaCount: 1
+    image: ai-sre-copilot/context-service:phase3
+    port: 8020
+    probes:
+      path: /ready
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+    hpa:
+      enabled: false
+    env:
+      SERVICE_NAME: context-service
+
+  knowledge-service:
+    enabled: true
+    replicaCount: 1
+    image: ai-sre-copilot/knowledge-service:phase4
+    port: 8030
+    probes:
+      path: /ready
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
+    hpa:
+      enabled: false
+    env:
+      SERVICE_NAME: knowledge-service
+
+  investigation-service:
+    enabled: true
+    replicaCount: 1
+    image: ai-sre-copilot/investigation-service:phase4
+    port: 8031
+    probes:
+      path: /ready
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
+    hpa:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 75
+    env:
+      SERVICE_NAME: investigation-service
+
+  remediation-service:
+    enabled: true
+    replicaCount: 2
+    image: ai-sre-copilot/remediation-service:phase5
+    port: 8032
+    probes:
+      path: /ready
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+    hpa:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+    env:
+      SERVICE_NAME: remediation-service
+      EXECUTION_ENABLED: "true"
+      ALLOW_MUTATIONS: "false"
+      RUN_MIGRATIONS_ON_STARTUP: "true"
+
+  model-gateway:
+    enabled: true
+    replicaCount: 1
+    image: ai-sre-copilot/model-gateway:phase4
+    port: 8040
+    probes:
+      path: /ready
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+    hpa:
+      enabled: false
+    env:
+      SERVICE_NAME: model-gateway
+
+  embedding-gateway:
+    enabled: true
+    replicaCount: 1
+    image: ai-sre-copilot/embedding-gateway:phase4
+    port: 8041
+    probes:
+      path: /ready
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
+    hpa:
+      enabled: false
+    env:
+      SERVICE_NAME: embedding-gateway
+
+  executive-dashboard:
+    enabled: true
+    replicaCount: 2
+    image: ai-sre-copilot/executive-dashboard:phase6
+    port: 8050
+    probes:
+      path: /health
+    resources:
+      requests: { cpu: 25m, memory: 64Mi }
+      limits: { cpu: 200m, memory: 128Mi }
+    hpa:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+    env: {}
+
+  sample-app:
+    enabled: true
+    replicaCount: 1
+    image: ai-sre-copilot/sample-app:phase1
+    port: 8080
+    probes:
+      path: /healthz
+    resources:
+      requests: { cpu: 25m, memory: 64Mi }
+      limits: { cpu: 300m, memory: 256Mi }
+    hpa:
+      enabled: false
+    env:
+      SERVICE_NAME: sample-app

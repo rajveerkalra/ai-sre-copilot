@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-sre-copilot
+  labels:
+    app.kubernetes.io/part-of: ai-sre-copilot
+    ai-sre-copilot.phase: "8"

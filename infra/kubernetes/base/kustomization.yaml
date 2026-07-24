@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ai-sre-copilot
+resources:
+  - namespace.yaml
+  - secret.yaml
+  - configmap.yaml
+  - auth-service.yaml
+  - incident-service.yaml
+  - remediation-service.yaml
+  - executive-dashboard.yaml
+  - ingress.yaml
+  - networkpolicy.yaml
+commonLabels:
+  app.kubernetes.io/part-of: ai-sre-copilot
+  ai-sre-copilot.phase: "8"

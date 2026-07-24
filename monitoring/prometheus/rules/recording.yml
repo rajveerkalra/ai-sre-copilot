@@ -1,0 +1,40 @@
+groups:
+  - name: sample_app_recording
+    interval: 30s
+    rules:
+      - record: job:http_request_error_rate:ratio_rate5m
+        expr: |
+          sum by (job, service) (
+            rate(http_requests_total{job="sample-app",status_code=~"5.."}[5m])
+          )
+          /
+          clamp_min(
+            sum by (job, service) (
+              rate(http_requests_total{job="sample-app"}[5m])
+            ),
+            1e-9
+          )
+
+      - record: job:http_request_latency_p99:seconds
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, job, service) (
+              rate(http_request_duration_seconds_bucket{job="sample-app"}[5m])
+            )
+          )
+
+      - record: job:http_request_latency_p50:seconds
+        expr: |
+          histogram_quantile(
+            0.50,
+            sum by (le, job, service) (
+              rate(http_request_duration_seconds_bucket{job="sample-app"}[5m])
+            )
+          )
+
+      - record: job:http_requests:rate5m
+        expr: |
+          sum by (job, service) (
+            rate(http_requests_total{job="sample-app"}[5m])
+          )

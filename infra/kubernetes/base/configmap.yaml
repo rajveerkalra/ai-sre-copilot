@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-sre-copilot-config
+  namespace: ai-sre-copilot
+data:
+  ENVIRONMENT: staging
+  JWT_ISSUER: ai-sre-copilot
+  AUTH_ENABLED: "true"
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  INCIDENT_SERVICE_URL: http://incident-service:8000
+  CONTEXT_SERVICE_URL: http://context-service:8020
+  INVESTIGATION_SERVICE_URL: http://investigation-service:8031
+  REMEDIATION_SERVICE_URL: http://remediation-service:8032
+  SAMPLE_APP_URL: http://sample-app:8080
+  REDIS_URL: redis://redis:6379/0

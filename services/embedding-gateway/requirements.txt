@@ -1,0 +1,15 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+httpx==0.28.1
+prometheus-client==0.21.1
+structlog==24.4.0
+redis==5.2.1
+chromadb==0.5.23
+onnxruntime==1.20.1
+# Optional: sentence-transformers (heavy). Enable via EMBEDDING_PROVIDER=sentence_transformers
+# sentence-transformers==3.3.1
+
+pytest==8.3.4
+pytest-asyncio==0.25.0

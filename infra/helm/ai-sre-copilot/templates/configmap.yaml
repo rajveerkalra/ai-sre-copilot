@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ai-sre-copilot.fullname" . }}-config
+  namespace: {{ include "ai-sre-copilot.namespace" . }}
+  labels:
+    {{- include "ai-sre-copilot.labels" . | nindent 4 }}
+data:
+  ENVIRONMENT: {{ .Values.config.environment | quote }}
+  JWT_ISSUER: {{ .Values.config.jwtIssuer | quote }}
+  AUTH_ENABLED: {{ .Values.config.authEnabled | quote }}
+  OTEL_TRACES_EXPORTER: {{ .Values.config.otelTracesExporter | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.config.otelExporterOtlpEndpoint | quote }}
+  INCIDENT_SERVICE_URL: http://incident-service:8000
+  CONTEXT_SERVICE_URL: http://context-service:8020
+  KNOWLEDGE_SERVICE_URL: http://knowledge-service:8030
+  INVESTIGATION_SERVICE_URL: http://investigation-service:8031
+  REMEDIATION_SERVICE_URL: http://remediation-service:8032
+  MODEL_GATEWAY_URL: http://model-gateway:8040
+  EMBEDDING_GATEWAY_URL: http://embedding-gateway:8041
+  SAMPLE_APP_URL: http://sample-app:8080
+  REDIS_URL: redis://redis:6379/0

@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Node
+node_modules/
+.next/
+dist/
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.local
+*.pem
+*.key
+secrets/*
+!secrets/.gitignore
+!secrets/README.md
+!secrets/secrets.example.env
+
+# Demo media (large binaries)
+docs/demo/media/
+backups/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Docker / runtime
+data/
+*.log
+tmp/
+
+# Terraform
+**/.terraform/
+*.tfstate*
+*.tfvars
+
+# Helm
+charts/*/charts/
+*.tgz
+
+# Ollama / models (local cache)
+.ollama/
+
+# ChromaDB local
+chroma_data/
+
+# Local service venvs
+**/.venv/
+**/node_modules/
+

@@ -1,0 +1,12 @@
+apiVersion: v2
+name: ai-sre-copilot
+description: AI-Augmented SRE Copilot platform (Phase 8)
+type: application
+version: 0.8.0
+appVersion: "0.8.0"
+keywords:
+  - sre
+  - incident
+  - observability
+maintainers:
+  - name: platform-engineering

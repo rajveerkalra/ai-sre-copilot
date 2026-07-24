@@ -1,0 +1,93 @@
+groups:
+  - name: sample_app_availability
+    rules:
+      - alert: SampleAppDown
+        expr: up{job="sample-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: sample-app
+          team: platform
+        annotations:
+          summary: "Sample app is down"
+          description: "Prometheus cannot scrape sample-app for more than 1 minute."
+          runbook_url: "https://localhost/runbooks/sample-app-down.md"
+
+      - alert: SampleAppHighErrorRate
+        expr: job:http_request_error_rate:ratio_rate5m > 0.15
+        for: 1m
+        labels:
+          severity: critical
+          service: sample-app
+          team: sre
+          scenario: high_error_rate
+        annotations:
+          summary: "Sample app error rate > 15%"
+          description: "5xx error rate is {{ $value | humanizePercentage }} over 5m."
+          runbook_url: "https://localhost/runbooks/high-error-rate.md"
+
+      - alert: SampleAppHighLatency
+        expr: job:http_request_latency_p99:seconds > 0.5
+        for: 1m
+        labels:
+          severity: warning
+          service: sample-app
+          team: sre
+          scenario: high_latency
+        annotations:
+          summary: "Sample app p99 latency > 500ms"
+          description: "p99 latency is {{ $value }}s."
+          runbook_url: "https://localhost/runbooks/high-latency.md"
+
+  - name: sample_app_resources
+    rules:
+      - alert: SampleAppCPUFaultActive
+        expr: sample_app_cpu_burn_active == 1
+        for: 30s
+        labels:
+          severity: warning
+          service: sample-app
+          team: sre
+          scenario: high_cpu
+        annotations:
+          summary: "CPU spike fault is active"
+          description: "sample_app_cpu_burn_active=1 — simulated CPU exhaustion."
+          runbook_url: "https://localhost/runbooks/high-cpu.md"
+
+      - alert: SampleAppMemoryFaultActive
+        expr: sample_app_memory_ballast_bytes > 100000000
+        for: 30s
+        labels:
+          severity: warning
+          service: sample-app
+          team: sre
+          scenario: high_memory
+        annotations:
+          summary: "Memory ballast fault exceeds 100MB"
+          description: "Memory ballast is {{ $value | humanize }}B."
+          runbook_url: "https://localhost/runbooks/high-memory.md"
+
+      - alert: SampleAppDependencyTimeouts
+        expr: |
+          sum(rate(sample_app_dependency_calls_total{status="timeout"}[2m])) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+          service: sample-app
+          team: sre
+          scenario: dependency_timeout
+        annotations:
+          summary: "Dependency timeouts detected"
+          description: "Payments (or other) dependency is timing out."
+          runbook_url: "https://localhost/runbooks/dependency-timeout.md"
+
+      - alert: SampleAppFaultInjectionActive
+        expr: max by (fault_type) (sample_app_fault_active) == 1
+        for: 15s
+        labels:
+          severity: info
+          service: sample-app
+          team: platform
+        annotations:
+          summary: "Fault injection active ({{ $labels.fault_type }})"
+          description: "Demo fault '{{ $labels.fault_type }}' is currently injected."

@@ -1,0 +1,34 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-sre-copilot
+  namespace: ai-sre-copilot
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "8m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: sre.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: executive-dashboard
+                port:
+                  number: 8050
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8060
+          - path: /api/incidents
+            pathType: Prefix
+            backend:
+              service:
+                name: incident-service
+                port:
+                  number: 8000

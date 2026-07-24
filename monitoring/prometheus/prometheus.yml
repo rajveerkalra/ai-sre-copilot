@@ -1,0 +1,120 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: local
+    environment: local
+    platform: ai-sre-copilot
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: prometheus
+
+  - job_name: sample-app
+    metrics_path: /metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["sample-app:8080"]
+        labels:
+          service: sample-app
+          tier: application
+
+  - job_name: incident-service
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["incident-service:8000"]
+        labels:
+          service: incident-service
+          tier: platform
+
+  - job_name: context-service
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["context-service:8020"]
+        labels:
+          service: context-service
+          tier: platform
+
+  - job_name: knowledge-service
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["knowledge-service:8030"]
+        labels:
+          service: knowledge-service
+          tier: platform
+
+  - job_name: investigation-service
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["investigation-service:8031"]
+        labels:
+          service: investigation-service
+          tier: platform
+
+  - job_name: model-gateway
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["model-gateway:8040"]
+        labels:
+          service: model-gateway
+          tier: platform
+
+  - job_name: embedding-gateway
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["embedding-gateway:8041"]
+        labels:
+          service: embedding-gateway
+          tier: platform
+
+  - job_name: remediation-service
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["remediation-service:8032"]
+        labels:
+          service: remediation-service
+          tier: platform
+
+  - job_name: auth-service
+    metrics_path: /metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["auth-service:8060"]
+        labels:
+          service: auth-service
+          tier: platform
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+        labels:
+          service: alertmanager
+
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+        labels:
+          service: loki
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: ".*"
+        action: keep

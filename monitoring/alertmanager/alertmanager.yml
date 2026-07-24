@@ -1,0 +1,41 @@
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: "localhost:25"
+  smtp_from: "alertmanager@ai-sre-copilot.local"
+
+route:
+  receiver: default-log
+  group_by: ["alertname", "service", "severity"]
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 1h
+  routes:
+    - matchers:
+        - severity = critical
+      receiver: incident-webhook
+      continue: true
+    - matchers:
+        - severity = warning
+      receiver: incident-webhook
+      continue: true
+    - matchers:
+        - severity =~ "info|warning|critical"
+      receiver: default-log
+
+inhibit_rules:
+  - source_matchers:
+      - severity = critical
+    target_matchers:
+      - severity = warning
+    equal: ["alertname", "service"]
+
+receivers:
+  - name: default-log
+
+  - name: incident-webhook
+    webhook_configs:
+      - url: "http://incident-service:8000/webhooks/alertmanager"
+        send_resolved: true
+        max_alerts: 0
+        http_config:
+          follow_redirects: true

@@ -1,0 +1,47 @@
+# Production overrides — larger replicas, no demo secrets inline
+config:
+  environment: production
+  authEnabled: "true"
+
+secrets:
+  create: false  # manage via ExternalSecrets / SealedSecrets
+
+apps:
+  auth-service:
+    replicaCount: 3
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+    hpa:
+      minReplicas: 3
+      maxReplicas: 12
+  incident-service:
+    replicaCount: 3
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits: { cpu: 1000m, memory: 1Gi }
+  remediation-service:
+    replicaCount: 3
+  executive-dashboard:
+    replicaCount: 3
+
+postgres:
+  persistence:
+    size: 50Gi
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: 2000m, memory: 2Gi }
+
+ingress:
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    - secretName: sre-tls
+      hosts: ["sre.example.com"]
+  hosts:
+    - host: sre.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service: executive-dashboard
+          port: 8050

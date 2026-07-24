@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+replicas:
+  - name: auth-service
+    count: 1
+  - name: incident-service
+    count: 1
+  - name: remediation-service
+    count: 1
+  - name: executive-dashboard
+    count: 1
+images:
+  - name: ai-sre-copilot/auth-service
+    newTag: phase7
+  - name: ai-sre-copilot/incident-service
+    newTag: phase2
+  - name: ai-sre-copilot/remediation-service
+    newTag: phase5
+  - name: ai-sre-copilot/executive-dashboard
+    newTag: phase6

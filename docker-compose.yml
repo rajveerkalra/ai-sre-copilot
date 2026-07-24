@@ -1,0 +1,749 @@
+# AI SRE Copilot — Phases 1–4 (Observability → Incident → Context → AI Investigation)
+# Fully local. No cloud dependencies.
+
+name: ai-sre-copilot
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  sample-app:
+    build:
+      context: .
+      dockerfile: services/sample-app/Dockerfile
+    image: ai-sre-copilot/sample-app:phase1
+    container_name: ai-sre-sample-app
+    ports:
+      - "${SAMPLE_APP_PORT:-8080}:8080"
+    environment:
+      SERVICE_NAME: sample-app
+      ENVIRONMENT: ${SAMPLE_APP_ENVIRONMENT:-local}
+      LOG_LEVEL: ${SAMPLE_APP_LOG_LEVEL:-INFO}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-none}
+    networks:
+      - sre-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: sample-app
+      ai-sre-copilot.phase: "1"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-sre-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sre}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sre}
+      POSTGRES_DB: ${POSTGRES_DB:-sre_incidents}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - sre-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sre} -d ${POSTGRES_DB:-sre_incidents}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: postgres
+      ai-sre-copilot.phase: "2"
+
+  incident-service:
+    build:
+      context: .
+      dockerfile: services/incident-service/Dockerfile
+    image: ai-sre-copilot/incident-service:phase2
+    container_name: ai-sre-incident-service
+    ports:
+      - "${INCIDENT_SERVICE_PORT:-8000}:8000"
+    environment:
+      SERVICE_NAME: incident-service
+      ENVIRONMENT: ${INCIDENT_ENVIRONMENT:-local}
+      LOG_LEVEL: ${INCIDENT_LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sre}:${POSTGRES_PASSWORD:-sre}@postgres:5432/${POSTGRES_DB:-sre_incidents}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-sre}:${POSTGRES_PASSWORD:-sre}@postgres:5432/${POSTGRES_DB:-sre_incidents}
+      RUN_MIGRATIONS_ON_STARTUP: "true"
+      CONTEXT_SERVICE_URL: http://context-service:8020
+      CONTEXT_SERVICE_ENABLED: "true"
+      CONTEXT_SERVICE_TIMEOUT_SECONDS: "120"
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      JWT_SECRET: ${JWT_SECRET:-change-me-phase7-local-secret-min-32-chars!!}
+      JWT_ISSUER: ${JWT_ISSUER:-ai-sre-copilot}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+    networks:
+      - sre-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      context-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: incident-service
+      ai-sre-copilot.phase: "2"
+
+  context-service:
+    build:
+      context: .
+      dockerfile: services/context-service/Dockerfile
+    image: ai-sre-copilot/context-service:phase3
+    container_name: ai-sre-context-service
+    user: "0:0"
+    ports:
+      - "${CONTEXT_SERVICE_PORT:-8020}:8020"
+    environment:
+      SERVICE_NAME: context-service
+      ENVIRONMENT: ${CONTEXT_ENVIRONMENT:-local}
+      LOG_LEVEL: ${CONTEXT_LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sre}:${POSTGRES_PASSWORD:-sre}@postgres:5432/${POSTGRES_DB:-sre_incidents}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-sre}:${POSTGRES_PASSWORD:-sre}@postgres:5432/${POSTGRES_DB:-sre_incidents}
+      RUN_MIGRATIONS_ON_STARTUP: "true"
+      PROMETHEUS_URL: http://prometheus:9090
+      LOKI_URL: http://loki:3100
+      INCIDENT_SERVICE_URL: http://incident-service:8000
+      ENABLE_DOCKER_COLLECTOR: "true"
+      ENABLE_KUBERNETES_COLLECTOR: "true"
+      DEFAULT_SERVICE: sample-app
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - sre-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/ready', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: context-service
+      ai-sre-copilot.phase: "3"
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: ai-sre-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+      - --web.enable-admin-api
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - sre-net
+    depends_on:
+      sample-app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://localhost:9090/-/healthy",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: prometheus
+      ai-sre-copilot.phase: "1"
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: ai-sre-alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.external-url=http://localhost:9093
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    networks:
+      - sre-net
+    depends_on:
+      incident-service:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://localhost:9093/-/healthy",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: alertmanager
+      ai-sre-copilot.phase: "1"
+
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: ai-sre-loki
+    user: "0"
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    networks:
+      - sre-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://localhost:3100/ready",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: loki
+      ai-sre-copilot.phase: "1"
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    container_name: ai-sre-promtail
+    command: -config.file=/etc/promtail/promtail.yml
+    volumes:
+      - ./monitoring/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - sre-net
+    depends_on:
+      loki:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: promtail
+      ai-sre-copilot.phase: "1"
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: ai-sre-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3000
+      GF_FEATURE_TOGGLES_ENABLE: "alertingNgAlertGroups"
+      GF_UNIFIED_ALERTING_ENABLED: "true"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    networks:
+      - sre-net
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q --spider http://localhost:3000/api/health || exit 1",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: grafana
+      ai-sre-copilot.phase: "1"
+
+  ollama:
+    image: ollama/ollama:0.6.5
+    container_name: ai-sre-ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - sre-net
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: ollama
+      ai-sre-copilot.phase: "4"
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: ai-sre-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - sre-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: redis
+      ai-sre-copilot.phase: "4"
+
+  model-gateway:
+    build:
+      context: .
+      dockerfile: services/model-gateway/Dockerfile
+    image: ai-sre-copilot/model-gateway:phase4
+    container_name: ai-sre-model-gateway
+    ports:
+      - "${MODEL_GATEWAY_PORT:-8040}:8040"
+    environment:
+      SERVICE_NAME: model-gateway
+      ENVIRONMENT: ${MODEL_GATEWAY_ENVIRONMENT:-local}
+      LOG_LEVEL: ${MODEL_GATEWAY_LOG_LEVEL:-INFO}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      DEFAULT_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-60}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      REDIS_URL: redis://redis:6379/0
+      CACHE_ENABLED: "true"
+      RETRIES: "3"
+      REQUEST_TIMEOUT_SECONDS: "60"
+    networks:
+      - sre-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8040/ready', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: model-gateway
+      ai-sre-copilot.phase: "4"
+
+  embedding-gateway:
+    build:
+      context: .
+      dockerfile: services/embedding-gateway/Dockerfile
+    image: ai-sre-copilot/embedding-gateway:phase4
+    container_name: ai-sre-embedding-gateway
+    ports:
+      - "${EMBEDDING_GATEWAY_PORT:-8041}:8041"
+    environment:
+      SERVICE_NAME: embedding-gateway
+      ENVIRONMENT: ${EMBEDDING_GATEWAY_ENVIRONMENT:-local}
+      LOG_LEVEL: ${EMBEDDING_GATEWAY_LOG_LEVEL:-INFO}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-onnx}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      EMBEDDING_DIM: "384"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      REDIS_URL: redis://redis:6379/0
+      CACHE_ENABLED: "true"
+      RETRIES: "3"
+    networks:
+      - sre-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8041/ready', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: embedding-gateway
+      ai-sre-copilot.phase: "4"
+
+  knowledge-service:
+    build:
+      context: .
+      dockerfile: services/knowledge-service/Dockerfile
+    image: ai-sre-copilot/knowledge-service:phase4
+    container_name: ai-sre-knowledge-service
+    ports:
+      - "${KNOWLEDGE_SERVICE_PORT:-8030}:8030"
+    environment:
+      SERVICE_NAME: knowledge-service
+      ENVIRONMENT: ${KNOWLEDGE_ENVIRONMENT:-local}
+      LOG_LEVEL: ${KNOWLEDGE_LOG_LEVEL:-INFO}
+      CHROMA_PERSIST_DIR: /data/chroma
+      CHROMA_COLLECTION: sre_runbooks
+      SEED_ON_STARTUP: "true"
+      SEED_DIR: /seed
+      EMBEDDING_GATEWAY_URL: http://embedding-gateway:8041
+      REDIS_URL: redis://redis:6379/0
+      CACHE_ENABLED: "true"
+      SEARCH_CACHE_TTL_SECONDS: "300"
+    volumes:
+      - knowledge-chroma:/data/chroma
+    networks:
+      - sre-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      embedding-gateway:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8030/ready', timeout=5)",
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: knowledge-service
+      ai-sre-copilot.phase: "4"
+
+  investigation-service:
+    build:
+      context: .
+      dockerfile: services/investigation-service/Dockerfile
+    image: ai-sre-copilot/investigation-service:phase4
+    container_name: ai-sre-investigation-service
+    ports:
+      - "${INVESTIGATION_SERVICE_PORT:-8031}:8031"
+    environment:
+      SERVICE_NAME: investigation-service
+      ENVIRONMENT: ${INVESTIGATION_ENVIRONMENT:-local}
+      LOG_LEVEL: ${INVESTIGATION_LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sre}:${POSTGRES_PASSWORD:-sre}@postgres:5432/${POSTGRES_DB:-sre_incidents}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-sre}:${POSTGRES_PASSWORD:-sre}@postgres:5432/${POSTGRES_DB:-sre_incidents}
+      RUN_MIGRATIONS_ON_STARTUP: "true"
+      CONTEXT_SERVICE_URL: http://context-service:8020
+      KNOWLEDGE_SERVICE_URL: http://knowledge-service:8030
+      INCIDENT_SERVICE_URL: http://incident-service:8000
+      MODEL_GATEWAY_URL: http://model-gateway:8040
+      LLM_MODEL: ${OLLAMA_MODEL:-llama3.2}
+      LLM_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-60}
+      LLM_ENABLED: ${OLLAMA_ENABLED:-true}
+      REDIS_URL: redis://redis:6379/0
+      CACHE_ENABLED: "true"
+      PROMPT_VERSION: ${PROMPT_VERSION:-rca-v1}
+      AUTO_COLLECT_CONTEXT_IF_MISSING: "true"
+    networks:
+      - sre-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      context-service:
+        condition: service_healthy
+      knowledge-service:
+        condition: service_healthy
+      model-gateway:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8031/ready', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: investigation-service
+      ai-sre-copilot.phase: "4"
+
+  remediation-service:
+    build:
+      context: .
+      dockerfile: services/remediation-service/Dockerfile
+    image: ai-sre-copilot/remediation-service:phase5
+    container_name: ai-sre-remediation-service
+    ports:
+      - "${REMEDIATION_SERVICE_PORT:-8032}:8032"
+    environment:
+      SERVICE_NAME: remediation-service
+      ENVIRONMENT: ${REMEDIATION_ENVIRONMENT:-local}
+      LOG_LEVEL: ${REMEDIATION_LOG_LEVEL:-INFO}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sre}:${POSTGRES_PASSWORD:-sre}@postgres:5432/${POSTGRES_DB:-sre_incidents}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-sre}:${POSTGRES_PASSWORD:-sre}@postgres:5432/${POSTGRES_DB:-sre_incidents}
+      RUN_MIGRATIONS_ON_STARTUP: "true"
+      INVESTIGATION_SERVICE_URL: http://investigation-service:8031
+      INCIDENT_SERVICE_URL: http://incident-service:8000
+      SAMPLE_APP_URL: http://sample-app:8080
+      EXECUTION_ENABLED: "true"
+      ALLOW_MUTATIONS: "false"
+      ALLOW_COMPOSE_RESTART: "false"
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      JWT_SECRET: ${JWT_SECRET:-change-me-phase7-local-secret-min-32-chars!!}
+      JWT_ISSUER: ${JWT_ISSUER:-ai-sre-copilot}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+    networks:
+      - sre-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      investigation-service:
+        condition: service_healthy
+      incident-service:
+        condition: service_healthy
+      sample-app:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8032/ready', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 35s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: remediation-service
+      ai-sre-copilot.phase: "5"
+
+  executive-dashboard:
+    build:
+      context: .
+      dockerfile: services/executive-dashboard/Dockerfile
+    image: ai-sre-copilot/executive-dashboard:phase6
+    container_name: ai-sre-executive-dashboard
+    ports:
+      - "${EXECUTIVE_DASHBOARD_PORT:-8050}:8050"
+    networks:
+      - sre-net
+    depends_on:
+      incident-service:
+        condition: service_healthy
+      context-service:
+        condition: service_healthy
+      investigation-service:
+        condition: service_healthy
+      remediation-service:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8050/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: executive-dashboard
+      ai-sre-copilot.phase: "6"
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    image: ai-sre-copilot/auth-service:phase7
+    container_name: ai-sre-auth-service
+    ports:
+      - "${AUTH_SERVICE_PORT:-8060}:8060"
+    environment:
+      SERVICE_NAME: auth-service
+      ENVIRONMENT: ${AUTH_ENVIRONMENT:-local}
+      LOG_LEVEL: ${AUTH_LOG_LEVEL:-INFO}
+      JWT_SECRET: ${JWT_SECRET:-change-me-phase7-local-secret-min-32-chars!!}
+      JWT_ISSUER: ${JWT_ISSUER:-ai-sre-copilot}
+      AUTH_USERS: ${AUTH_USERS:-admin:admin123:admin,operator:operator123:operator,viewer:viewer123:viewer}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+    networks:
+      - sre-net
+    depends_on:
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8060/ready', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: auth-service
+      ai-sre-copilot.phase: "7"
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.76.0
+    container_name: ai-sre-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+    networks:
+      - sre-net
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: jaeger
+      ai-sre-copilot.phase: "7"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    container_name: ai-sre-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./monitoring/otel/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "${OTEL_COLLECTOR_GRPC_PORT:-4317}:4317"
+      - "${OTEL_COLLECTOR_HTTP_PORT:-4318}:4318"
+    networks:
+      - sre-net
+    depends_on:
+      - jaeger
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: otel-collector
+      ai-sre-copilot.phase: "7"
+
+networks:
+  sre-net:
+    name: ai-sre-net
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  loki-data:
+  grafana-data:
+  postgres-data:
+  ollama-data:
+  knowledge-chroma:
+  redis-data:
