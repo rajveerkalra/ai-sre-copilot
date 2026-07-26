@@ -1,0 +1,159 @@
+# RCA accuracy: methodology, measured numbers, and limitations
+
+This project makes two distinct claims about correctness, and they are
+verified very differently:
+
+1. The **deterministic rule-based fallback** (`services/investigation-service/app/services/fallback.py`)
+   is regression-tested against a golden dataset in CI on every push.
+2. The **LLM RCA synthesis path** (`rca_synthesizer` in `app/agents/investigators.py`)
+   was measured against the same golden dataset by hand, against a live local
+   model. It is *not* run in CI (see "Why the LLM eval isn't in CI" below).
+
+Neither of these is a substitute for validation against real historical
+incidents at whatever infrastructure this is eventually pointed at. Both are
+regression harnesses, not proof of real-world accuracy.
+
+## 1. Rule-based fallback: 100% on 9 golden cases (CI-gated)
+
+`eval/run_eval.py` and `eval/golden_cases.py` (in `services/investigation-service/`)
+encode 9 synthetic incidents, one per rule in the fallback engine (OOM,
+crashloop, error storm, latency, CPU, memory, dependency timeout, deployment
+regression, and a no-signal "insufficient evidence" case). `tests/test_eval_golden.py`
+runs this as part of the normal pytest suite, so it's gated in CI
+(`.github/workflows/ci.yml`) on every push — a regression in the rule table
+fails the build.
+
+This only proves the rule table matches its own test cases; it says nothing
+about how often those 8 hardcoded patterns actually match a real, unforeseen
+incident. They're keyed to fairly specific keyword matches (see `fallback.py`)
+and were written against this project's own sample-app fault-injection
+vocabulary.
+
+## 2. LLM synthesis path: measured 0% → 100% (manually, not CI-gated)
+
+`eval/run_llm_eval.py` runs the same golden dataset through the *actual*
+`rca_synthesizer` + `citation_validator` production code, against a live
+model-gateway + Ollama. This is where the real story is.
+
+### What we found running it for the first time
+
+Against the golden set, with a live Ollama instance genuinely reachable and
+responding (not a mock, not a stub):
+
+| Model | Fallback rate | Root-cause accuracy |
+|---|---|---|
+| `llama3.2:1b` | 0% (LLM ran every time) | **0%** |
+| `llama3.2` (3b) | 0% (LLM ran every time) | **0%** |
+
+Every single case, on both model sizes, came back `root_cause: "Insufficient
+evidence"` — including the textbook error-storm case where the evidence
+contained a log line reading `"error_storm injected failure"` verbatim and a
+`HighErrorRate` alert. Manually calling the model outside the harness
+confirmed this wasn't a fluke: the model correctly identified and cited the
+right evidence IDs, but still labeled the verdict "Insufficient evidence."
+
+Both model sizes failing identically is a strong signal this was a **prompt
+bug, not a capability limit**. Two contributing causes were found and fixed:
+
+1. **The system prompt offered "Insufficient evidence" as an explicit escape
+   hatch** ("If evidence is insufficient, set root_cause to 'Insufficient
+   evidence'"), and the evidence was rendered as a raw Python dict repr
+   rather than readable text. Small local models took the safe/lazy answer
+   on nearly every case rather than committing to a diagnosis. Fix: render
+   evidence as plain `- id: summary` lines, ask a direct question ("what is
+   the most likely root cause"), and frame "Insufficient evidence" as a last
+   resort rather than a default option.
+2. **A `k8s-unavailable` evidence item** (present whenever the context
+   collector can't reach a Kubernetes API, which is normal for this Compose
+   demo) was phrased as `"Kubernetes unavailable: <reason>"` — worded just
+   like a plausible root cause. After fix (1), 4 of 8 cases converged on the
+   model citing *this* evidence item as the cause instead of the actual
+   metric/log evidence. Fix: reworded to `"Kubernetes evidence unavailable
+   for this investigation (collector could not reach the cluster: ...).
+   This is a monitoring gap, not a root cause -- do not cite it as the cause
+   of the incident."` (`app/services/evidence.py`).
+
+After both fixes, re-running the identical harness against the identical
+model (`llama3.2`, 3b) scored:
+
+| | Before | After |
+|---|---|---|
+| Root-cause accuracy (8 non-trivial golden cases) | 0% | **100%** |
+| Fallback rate | 0% | 0% |
+| Per-call latency | 15-40s (isolated) | 15-40s (isolated) |
+
+The 1B model was re-tested with the same fixed prompt and, while it stopped
+defaulting to "Insufficient evidence," it began corrupting the JSON structure
+instead (nesting `root_cause` as an object rather than a string) — it is not
+reliable at this task's multi-field structured-output demands regardless of
+prompt wording. **Use the 3B model (`OLLAMA_MODEL=llama3.2` in `.env`), not
+the 1B variant**, unless you have a strong reason to trade accuracy for
+speed.
+
+### A real, separate infra bug found along the way
+
+While chasing this, the *full 5-LLM-call pipeline* (4 optional investigator
+enrichments + 1 synthesis call) was found to fall back to the rule engine on
+CPU-only hardware even after the prompt fix — not because of a bad answer,
+but because of **timeout and circuit-breaker misconfiguration**:
+
+- `docker-compose.yml` hardcoded `REQUEST_TIMEOUT_SECONDS: "60"` for
+  model-gateway with no env-var override at all, and defaulted
+  `OLLAMA_TIMEOUT_SECONDS`/`LLM_TIMEOUT_SECONDS` to 60s if `.env` didn't set
+  them — silently overriding any code-level default. Fixed to
+  `${OLLAMA_TIMEOUT_SECONDS:-180}` throughout, and `.env`/`.env.example` now
+  set it explicitly.
+- `libs/common/resilience.py`'s `with_retry()` called the circuit breaker's
+  `record_failure()` once per retry *attempt* rather than once per outer
+  call. With `retries=3`, a single call that times out three times in a row
+  burned 3 of a `failure_threshold=5` in one shot — meaning two merely-slow
+  (not broken) calls could trip the breaker and silently force fallback for
+  the rest of the investigation. Fixed to record one failure per exhausted
+  call, matching what retries are supposed to buy you.
+
+Both are covered by their own justification comments at the call sites; the
+circuit-breaker fix is also unit-tested (`libs/common/tests/test_resilience.py`).
+
+## 3. Why the LLM eval isn't in CI
+
+`run_llm_eval.py` requires a real, reachable model-gateway with an actual
+model loaded and responding — it is not mocked. That means:
+
+- It's slow (minutes per run: 8 cases × 15-40s+ each).
+- It's non-deterministic (LLM sampling varies run to run, even at low
+  temperature).
+- It depends on infrastructure GitHub Actions runners don't have (a
+  multi-gigabyte local model, or a paid hosted API key).
+
+Running it is a manual step, documented here so the numbers above are
+reproducible rather than asserted:
+
+```bash
+cd services/investigation-service
+MODEL_GATEWAY_URL=http://localhost:8040 LLM_MODEL=llama3.2 LLM_TIMEOUT_SECONDS=180 \
+  PYTHONPATH=../..:. .venv/bin/python -m eval.run_llm_eval --json-out eval/llm-report.json
+```
+
+(Requires the full Compose stack up, with `ollama pull llama3.2` already run.)
+
+## 4. What these numbers do NOT tell you
+
+- **This is not a real-world accuracy measurement.** 8 golden cases, all
+  synthetic, all designed around this project's own sample-app fault
+  vocabulary. A 100% score here means the prompt fix works on the cases we
+  wrote, not that the system will correctly diagnose an unfamiliar incident
+  on unfamiliar infrastructure.
+- **No historical-incident validation exists.** There is no golden set built
+  from real past incidents with known, agreed-upon root causes. Before
+  pointing this at real infrastructure, build one from your own postmortems
+  and re-run this harness against it.
+- **No LLM-as-judge or human-rating loop exists** for cases where the
+  "correct" answer isn't a simple keyword match. The current scoring is
+  keyword-in-string matching (see `golden_cases.py`), which is precise but
+  brittle — a correct paraphrase can score as a false negative unless its
+  synonyms are added to the case (this happened once already; see the
+  `crashloop_backoff` case's comment in `golden_cases.py`).
+- **Latency is real and matters.** Even fixed, a full LLM-backed
+  investigation on CPU-only local hardware takes 90-250+ seconds. That's
+  workable for an assistive/human-approves-everything tool; it is not
+  "real-time."

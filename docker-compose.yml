@@ -390,15 +390,15 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       DEFAULT_MODEL: ${OLLAMA_MODEL:-llama3.2}
       OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-60}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-180}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
       REDIS_URL: redis://redis:6379/0
       CACHE_ENABLED: "true"
-      RETRIES: "3"
-      REQUEST_TIMEOUT_SECONDS: "60"
+      RETRIES: "2"
+      REQUEST_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-180}
     networks:
       - sre-net
     depends_on:
@@ -533,7 +533,7 @@ services:
       INCIDENT_SERVICE_URL: http://incident-service:8000
       MODEL_GATEWAY_URL: http://model-gateway:8040
       LLM_MODEL: ${OLLAMA_MODEL:-llama3.2}
-      LLM_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-60}
+      LLM_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-180}
       LLM_ENABLED: ${OLLAMA_ENABLED:-true}
       REDIS_URL: redis://redis:6379/0
       CACHE_ENABLED: "true"

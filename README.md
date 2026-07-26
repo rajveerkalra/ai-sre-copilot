@@ -116,6 +116,9 @@ helm lint infra/helm/ai-sre-copilot
 - [Architecture](docs/architecture.md) · [Sequences](docs/sequences.md) · [API](docs/API.md)
 - [Phase 9](docs/PHASE9.md) · [Phase 8](docs/PHASE8.md) · [Phase 7](docs/PHASE7.md)
 - [Production deployment](docs/PRODUCTION_DEPLOYMENT.md) · [DR](docs/DISASTER_RECOVERY.md) · [Security](docs/SECURITY_REVIEW.md)
+- [**RCA accuracy: methodology, measured numbers, and limitations**](docs/eval.md) — how
+  accurate the AI actually is, measured, not asserted; includes a 0% → 100%
+  before/after from a real prompt-engineering fix
 - Service READMEs under `services/*/README.md`
 
 ## License

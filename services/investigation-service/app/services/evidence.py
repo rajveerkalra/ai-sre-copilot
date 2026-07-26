@@ -64,7 +64,18 @@ def build_evidence_catalog(context: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "evidence_id": "k8s-unavailable",
                 "source": "kubernetes",
-                "summary": f"Kubernetes unavailable: {k8s.get('reason')}",
+                # Phrased explicitly as a monitoring gap, not a diagnosis: an LLM RCA
+                # synthesis pass was observed to misread the earlier, terser wording
+                # ("Kubernetes unavailable: <reason>") as itself being the incident's
+                # root cause, since it reads like a concrete infra failure. This is
+                # collector metadata (the collector couldn't reach the cluster) and
+                # should never be cited as a cause on its own.
+                "summary": (
+                    f"Kubernetes evidence unavailable for this investigation "
+                    f"(collector could not reach the cluster: {k8s.get('reason')}). "
+                    "This is a monitoring gap, not a root cause -- do not cite it as "
+                    "the cause of the incident."
+                ),
                 "raw": {"reason": k8s.get("reason")},
             }
         )

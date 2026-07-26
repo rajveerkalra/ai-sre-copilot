@@ -26,9 +26,15 @@ FROM deps AS runtime
 COPY libs /libs
 COPY services/embedding-gateway/app ./app
 
-# Pre-download ONNX MiniLM so first request does not trip circuit breaker
-RUN python -c "from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2; ONNXMiniLM_L6_V2()(['warmup'])" \
-    && chown -R app:app /home/app /data || true
+# Pre-download ONNX MiniLM so first request does not trip circuit breaker.
+# Must run with HOME=/home/app (the runtime user's home) -- this RUN executes
+# as root during build, whose default HOME is /root, so without this override
+# the model gets cached under /root/.cache and the runtime container (which
+# runs as `app`, HOME=/home/app) finds an empty cache and re-downloads the
+# ~80MB model on its first real request, which is slow/unreliable enough to
+# trip the embed circuit breaker before RAG ever becomes usable.
+RUN HOME=/home/app python -c "from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2; ONNXMiniLM_L6_V2()(['warmup'])" \
+    && chown -R app:app /home/app /data
 
 USER app
 EXPOSE 8041

@@ -23,7 +23,12 @@ class Settings(BaseSettings):
 
     # Ollama
     ollama_base_url: str = "http://ollama:11434"
-    ollama_timeout_seconds: float = 60.0
+    # CPU-only local inference for the rca_synthesizer's full-evidence prompt has
+    # been measured at 15-40s in isolation, but as the 3rd+ sequential LLM call in
+    # one investigation (after ~50s of prior enrichment calls) it was observed to
+    # exceed 120s under real load/contention. 180s gives real headroom; 60s made
+    # nearly every investigation time out and silently fall back to the rule engine.
+    ollama_timeout_seconds: float = 180.0
 
     # OpenAI-compatible stub
     openai_base_url: str = "https://api.openai.com/v1"
@@ -36,12 +41,12 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-3-5-sonnet-latest"
 
     # Resilience
-    retries: int = 3
+    retries: int = 2
     backoff_base_seconds: float = 0.5
     backoff_max_seconds: float = 8.0
     circuit_failure_threshold: int = 5
     circuit_recovery_seconds: float = 30.0
-    request_timeout_seconds: float = 60.0
+    request_timeout_seconds: float = 180.0
 
     # Redis (request/response optional cache for identical prompts)
     redis_url: str = "redis://redis:6379/0"

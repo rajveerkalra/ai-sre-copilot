@@ -89,13 +89,22 @@ async def with_retry(
     retry_on: tuple[type[BaseException], ...] = (Exception,),
     operation: str = "operation",
 ) -> T:
-    """Execute async fn with timeout, exponential backoff, and optional circuit breaker."""
+    """Execute async fn with timeout, exponential backoff, and optional circuit breaker.
+
+    The circuit breaker only observes the outcome of the whole call (all
+    retries exhausted, or a success), not each individual attempt. Recording
+    a failure per attempt would let one slow-but-recoverable operation burn
+    most of the failure budget by itself (e.g. retries=3 on a call that times
+    out three times consumes 3 of a failure_threshold=5 in one shot),
+    defeating the purpose of retrying at all.
+    """
     last_error: BaseException | None = None
     attempts = max(1, retries)
 
+    if circuit is not None:
+        await circuit.before_call()
+
     for attempt in range(1, attempts + 1):
-        if circuit is not None:
-            await circuit.before_call()
         try:
             if timeout_seconds is not None:
                 result = await asyncio.wait_for(fn(), timeout=timeout_seconds)
@@ -106,8 +115,6 @@ async def with_retry(
             return result
         except asyncio.TimeoutError as exc:
             last_error = exc
-            if circuit is not None:
-                await circuit.record_failure()
             if attempt >= attempts:
                 break
             delay = min(backoff_max, backoff_base * (2 ** (attempt - 1)))
@@ -116,13 +123,13 @@ async def with_retry(
             raise
         except retry_on as exc:  # type: ignore[misc]
             last_error = exc
-            if circuit is not None:
-                await circuit.record_failure()
             if attempt >= attempts:
                 break
             delay = min(backoff_max, backoff_base * (2 ** (attempt - 1)))
             await asyncio.sleep(delay)
 
+    if circuit is not None:
+        await circuit.record_failure()
     raise RetryExhaustedError(
         f"{operation} failed after {attempts} attempts", last_error=last_error
     ) from last_error

@@ -232,17 +232,33 @@ async def rca_synthesizer(state: dict[str, Any]) -> dict[str, Any]:
         if not await client.available():
             raise ModelGatewayError("Model gateway unavailable")
         system = (
-            "You are an experienced SRE producing root cause analysis. "
-            "Respond ONLY with JSON. You MUST only cite evidence_ids from the provided list. "
-            "If evidence is insufficient, set root_cause to 'Insufficient evidence' and confidence 0. "
-            "Never invent causes, metrics, logs, or IDs."
+            "You are an experienced SRE producing root cause analysis from monitoring "
+            "evidence. Respond ONLY with JSON. Never invent causes, metrics, logs, or IDs "
+            "not present in the evidence given to you."
         )
+        # Evidence is rendered as readable "- id: summary" lines rather than a raw Python
+        # dict repr. On a raw dict repr + a prompt that offers "Insufficient evidence" as
+        # an explicit escape hatch, small local models (llama3.2 1B/3B) were found to pick
+        # that escape hatch on ~100% of cases regardless of evidence strength -- measured
+        # via eval/run_llm_eval.py. Asking a direct question and demanding a concrete
+        # diagnosis, with "Insufficient evidence" framed as a last resort rather than a
+        # default, fixed this in manual testing; see docs/eval.md for before/after numbers.
+        evidence_lines = "\n".join(f"- {e['evidence_id']}: {e['summary']}" for e in evidence[:40])
         prompt = (
-            f"Allowed evidence_ids: {sorted(allowed)}\n"
-            f"Agent outputs: {agent_outputs}\n"
-            f"Evidence: {evidence[:40]}\n"
-            "Return JSON with keys: root_cause, confidence (0-100), business_impact, "
-            "next_steps (array), evidence_ids (array of allowed ids only), unknowns (array)."
+            f"Evidence collected for this incident:\n{evidence_lines}\n\n"
+            "Based on this evidence, what is the most likely root cause of this incident? "
+            "Give a specific, concrete diagnosis -- only answer 'Insufficient evidence' as "
+            "a last resort, if the evidence truly contains no relevant signal at all.\n\n"
+            "Return JSON with exactly these keys:\n"
+            "- root_cause: a plain string diagnosis\n"
+            "- confidence: number 0-100\n"
+            "- business_impact: plain string\n"
+            "- next_steps: array of plain strings\n"
+            "- evidence_ids: array containing ONLY entries copied verbatim "
+            f"(character-for-character, no added text) from this exact list: {sorted(allowed)}\n"
+            "- unknowns: array of plain strings\n\n"
+            f"Example of correctly formatted evidence_ids: {sorted(allowed)[:2]} "
+            "-- notice these are copied exactly with nothing appended."
         )
         parsed = await client.generate_json(agent=agent, system=system, prompt=prompt)
         cited = [eid for eid in (parsed.get("evidence_ids") or []) if eid in allowed]

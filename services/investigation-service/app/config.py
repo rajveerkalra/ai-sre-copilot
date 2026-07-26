@@ -37,8 +37,16 @@ class Settings(BaseSettings):
     model_gateway_url: str = "http://model-gateway:8040"
 
     llm_model: str = "llama3.2"
-    llm_timeout_seconds: float = 60.0
+    # CPU-only local inference for the rca_synthesizer's full-evidence prompt has
+    # been measured at 15-40s in isolation, but as the 3rd+ sequential LLM call in
+    # one investigation it was observed to exceed 120s under real load/contention.
+    # 180s gives real headroom; 60s made nearly every investigation silently fall
+    # back to the rule engine.
+    llm_timeout_seconds: float = 180.0
     llm_enabled: bool = True
+    # Kept separate from http_retries (below): LLM calls are slow enough that
+    # 3 retries at 180s each risks ~9 minutes of worst-case latency per agent.
+    llm_retries: int = 2
 
     redis_url: str = "redis://redis:6379/0"
     cache_enabled: bool = True

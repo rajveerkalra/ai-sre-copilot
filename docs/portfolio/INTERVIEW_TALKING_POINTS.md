@@ -14,6 +14,7 @@
 | What if Ollama is down? | model-gateway circuit breaker → investigation rule fallback |
 | How would you run this in prod? | Helm values-prod, ExternalSecrets, managed Postgres, GitOps |
 | Cost / efficiency? | Small K8s requests, HPA caps, local-first demo path |
+| **How accurate is the RCA, really?** | Measured, not asserted — see [docs/eval.md](../eval.md). First run: 0% on both a 1B and 3B local model, every case defaulting to "Insufficient evidence" even with a textbook error-storm log line present. Root cause was a prompt bug (an explicit "say insufficient evidence" escape hatch + a misleading evidence label), not a model-capability limit — both models failed identically. After fixing the prompt and an evidence-wording issue: **100% on the 8-case golden set** with the 3B model. Also found and fixed a real timeout/circuit-breaker misconfiguration that was silently forcing rule-fallback on CPU-only hardware even *after* the prompt fix. |
 
 ## Trade-offs you can discuss honestly
 

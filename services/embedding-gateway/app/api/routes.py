@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
@@ -49,11 +49,14 @@ async def health() -> dict:
 
 @router.get("/ready")
 @router.get("/readyz")
-async def ready() -> dict:
+async def ready(response: Response) -> dict:
     gw = get_gateway()
     s = get_settings()
+    circuit_open = gw.circuit.state.value == "open"
+    if circuit_open:
+        response.status_code = 503
     return {
-        "status": "healthy",
+        "status": "degraded" if circuit_open else "healthy",
         "service": s.service_name,
         "provider": s.embedding_provider,
         "redis": gw.cache.available,

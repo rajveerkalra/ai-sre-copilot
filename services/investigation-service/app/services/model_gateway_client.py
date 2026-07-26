@@ -84,7 +84,7 @@ class ModelGatewayClient:
         try:
             parsed = await with_retry(
                 _call,
-                retries=self.settings.http_retries,
+                retries=self.settings.llm_retries,
                 backoff_base=self.settings.http_backoff_base,
                 timeout_seconds=self.settings.llm_timeout_seconds,
                 circuit=_breaker,
