@@ -1,6 +1,7 @@
 from app.models.investigation import (
     AgentResult,
     Evidence,
+    FeedbackStatus,
     InvestigationRun,
     InvestigationStatus,
     RCAReport,
@@ -9,6 +10,7 @@ from app.models.investigation import (
 __all__ = [
     "AgentResult",
     "Evidence",
+    "FeedbackStatus",
     "InvestigationRun",
     "InvestigationStatus",
     "RCAReport",

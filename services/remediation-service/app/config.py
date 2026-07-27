@@ -38,6 +38,17 @@ class Settings(BaseSettings):
     allow_mutations: bool = False
     allow_compose_restart: bool = False
 
+    # Real Docker restart execution (see services/docker_executor.py). Only
+    # logical service names in this comma-separated allowlist may ever be
+    # restarted -- this is a hard safelist enforced in code, independent of
+    # whatever the LLM/rule engine proposes, so a bad or hallucinated
+    # proposal can never reach postgres/redis/etc. `docker_container_prefix`
+    # maps a logical name ("sample-app") to its real container name
+    # ("ai-sre-sample-app") the way this project's docker-compose.yml names
+    # containers.
+    restart_allowed_services: str = "sample-app"
+    docker_container_prefix: str = "ai-sre-"
+
     http_timeout_seconds: float = 30.0
     http_retries: int = 3
 

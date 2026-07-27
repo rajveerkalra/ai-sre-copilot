@@ -9,6 +9,7 @@ import structlog
 
 from app.config import Settings, get_settings
 from app.models import ActionType, RemediationProposal
+from app.services.docker_executor import DockerExecutionError, restart_container
 
 logger = structlog.get_logger(__name__)
 
@@ -73,12 +74,13 @@ async def execute_proposal(
     if action == ActionType.RESTART_SERVICE:
         if not settings.allow_compose_restart:
             raise ExecutionError("Compose restart not allowed (ALLOW_COMPOSE_RESTART=false)")
-        return {
-            "dry_run": False,
-            "action_type": action.value,
-            "message": "Compose restart requested (local stub — operator must restart container)",
-            "service": params.get("service"),
-        }
+        service = params.get("service")
+        if not service:
+            raise ExecutionError("RESTART_SERVICE proposal missing 'service' parameter")
+        try:
+            return restart_container(service, settings)
+        except DockerExecutionError as exc:
+            raise ExecutionError(str(exc)) from exc
     if action in {ActionType.ROLLBACK, ActionType.SCALE}:
         if not settings.allow_mutations:
             raise ExecutionError("Mutations not allowed for this action without ALLOW_MUTATIONS")

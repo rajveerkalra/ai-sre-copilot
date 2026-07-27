@@ -8,11 +8,28 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import InvestigationStatus
+from app.models import FeedbackStatus, InvestigationStatus
 
 
 class InvestigateRequest(BaseModel):
     correlation_id: str | None = None
+
+
+class FeedbackRequest(BaseModel):
+    status: FeedbackStatus
+    notes: str | None = None
+    reviewed_by: str | None = None
+
+
+class FeedbackResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    investigation_id: uuid.UUID
+    feedback_status: FeedbackStatus
+    feedback_notes: str | None = None
+    feedback_by: str | None = None
+    feedback_at: datetime | None = None
+    learned_doc_id: str | None = None
 
 
 class InvestigateResponse(BaseModel):

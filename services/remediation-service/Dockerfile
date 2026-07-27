@@ -12,7 +12,14 @@ RUN groupadd --gid 10001 app \
     && useradd --uid 10001 --gid app --shell /usr/sbin/nologin --create-home app \
     && apt-get update \
     && apt-get install -y --no-install-recommends libpq5 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # /var/run/docker.sock (mounted for real container-restart execution, see
+    # docker_executor.py) is root:root on the host, group-readable/writable.
+    # Adding `app` to the `root` group is group-membership only -- it does
+    # NOT make `app` a root *user* -- but it's what lets a non-root process
+    # talk to a root-owned Unix socket without running the whole service as
+    # root.
+    && usermod -aG root app
 
 WORKDIR ${APP_HOME}
 

@@ -49,6 +49,7 @@ def rule_based_rca(
             "required": [],
             "impact": "Pod unavailable; traffic may be degraded",
             "steps": [
+                "Restart the affected container once config/secrets are fixed",
                 "Inspect previous container logs",
                 "Validate config/secrets",
                 "Roll back bad image if correlated",

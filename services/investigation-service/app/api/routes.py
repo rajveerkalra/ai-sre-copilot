@@ -9,8 +9,16 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import check_db, get_db
-from app.schemas.investigation import InvestigateRequest, InvestigateResponse, InvestigationDetail
+from app.schemas.investigation import (
+    FeedbackRequest,
+    FeedbackResponse,
+    InvestigateRequest,
+    InvestigateResponse,
+    InvestigationDetail,
+)
+from app.services import feedback as feedback_service
 from app.services import orchestrator
+from app.services.feedback import NoRcaError
 from app.services.orchestrator import (
     ContextMissingError,
     InvestigationNotFoundError,
@@ -114,7 +122,34 @@ async def get_rca(
         "supporting_runbooks": rca.supporting_runbooks,
         "used_fallback": rca.used_fallback,
         "full_report": rca.full_report,
+        "feedback_status": rca.feedback_status,
+        "feedback_notes": rca.feedback_notes,
+        "learned_doc_id": rca.learned_doc_id,
     }
+
+
+@router.post("/investigations/{investigation_id}/feedback", response_model=FeedbackResponse)
+async def submit_feedback(
+    investigation_id: uuid.UUID,
+    body: FeedbackRequest,
+    db: AsyncSession = Depends(get_db),
+) -> FeedbackResponse:
+    """Operator verdict on an RCA. A "correct" verdict feeds the RCA and its
+    grounding evidence back into the knowledge-service as a new citable
+    precedent for future investigations -- see app/services/feedback.py."""
+    try:
+        rca = await feedback_service.submit_feedback(
+            db,
+            investigation_id,
+            status=body.status,
+            notes=body.notes,
+            reviewed_by=body.reviewed_by,
+        )
+    except InvestigationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except NoRcaError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return FeedbackResponse.model_validate(rca)
 
 
 @router.get("/incidents/{incident_id}/investigation")

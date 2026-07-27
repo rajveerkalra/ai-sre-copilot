@@ -157,3 +157,53 @@ MODEL_GATEWAY_URL=http://localhost:8040 LLM_MODEL=llama3.2 LLM_TIMEOUT_SECONDS=1
   investigation on CPU-only local hardware takes 90-250+ seconds. That's
   workable for an assistive/human-approves-everything tool; it is not
   "real-time."
+
+## 5. Beyond eval: real remediation execution, and case-based learning
+
+Two capabilities beyond RCA accuracy were added and verified live (not just
+unit-tested) against the running local stack.
+
+### Real remediation execution (not a stub)
+
+`RESTART_SERVICE` proposals now execute a genuine `docker restart` against
+the real `sample-app` container via the Docker Engine API
+(`services/remediation-service/app/services/docker_executor.py`), gated by
+two independent, code-enforced checks on top of the existing human-approval
+requirement:
+
+1. `ALLOW_COMPOSE_RESTART` (existing config flag).
+2. A hard allowlist (`RESTART_ALLOWED_SERVICES`) enforced in code — verified
+   live that a direct attempt to restart `postgres` is correctly refused,
+   even though nothing about the Docker API itself would stop it.
+
+Bug found in the process: the RCA→proposal mapper only ever creates a
+`RESTART_SERVICE` proposal if the literal word "restart" appears in the
+RCA's root cause or next-steps text, and none of the 8 rule-based RCA
+outputs said "restart" — the feature was unreachable through the normal
+incident flow. Fixed by adding a restart step to the CrashLoopBackOff rule
+(`fallback.py`), the one scenario where it's a genuinely sensible
+suggestion, and confirmed the mapper now produces the proposal correctly.
+
+`ROLLBACK` and `SCALE` remain honest stubs (`"Mutation stub recorded"`).
+
+### Case-based learning (not model fine-tuning)
+
+`POST /investigations/{id}/feedback` (investigation-service) lets an
+operator mark an RCA `correct` / `incorrect` / `partial`. A `correct`
+verdict does more than log the verdict: the RCA and the evidence that
+grounded it are pushed into knowledge-service as a new document
+(`app/services/feedback.py`), so a future, similar incident's
+`runbook_investigator` can retrieve and cite it via the existing RAG path —
+verified live: the learned document search-ranked *above* the seed runbooks
+(score 0.61 vs. 0.48) for a semantically similar query, and resubmitting
+feedback on the same investigation correctly reused the existing
+`learned_doc_id` instead of creating a duplicate.
+
+This is deliberately not fine-tuning. Fine-tuning needs a meaningful volume
+of labeled examples before it's worth the infrastructure; retrieval-based
+learning gets useful on the very first confirmed incident, degrades
+gracefully, and is fully inspectable (you can read every "lesson" the system
+has learned as a plain document in the knowledge base). It's the
+appropriate scale of "learning" for a project at this incident volume — see
+the roadmap discussion in the project README for when fine-tuning would
+become the right next step.

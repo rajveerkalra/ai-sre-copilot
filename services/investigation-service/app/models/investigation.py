@@ -25,6 +25,13 @@ class InvestigationStatus(str, enum.Enum):
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
 
+class FeedbackStatus(str, enum.Enum):
+    UNREVIEWED = "unreviewed"
+    CORRECT = "correct"
+    INCORRECT = "incorrect"
+    PARTIAL = "partial"
+
+
 class InvestigationRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "investigation_runs"
     __table_args__ = (Index("ix_investigation_runs_incident_id", "incident_id"),)
@@ -134,5 +141,27 @@ class RCAReport(Base, UUIDPrimaryKeyMixin):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
+
+    # Operator feedback -- see app/services/feedback.py. A "correct" verdict
+    # feeds the RCA + its evidence back into the knowledge-service as a new
+    # citable precedent (case-based learning), rather than just being logged.
+    feedback_status: Mapped[FeedbackStatus] = mapped_column(
+        Enum(
+            FeedbackStatus,
+            name="feedback_status",
+            values_callable=lambda e: [x.value for x in e],
+            native_enum=False,
+            length=16,
+        ),
+        nullable=False,
+        default=FeedbackStatus.UNREVIEWED,
+    )
+    feedback_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    feedback_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    feedback_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set once this RCA has been ingested into the knowledge base as a
+    # learned precedent; also acts as an idempotency guard against
+    # re-ingesting on repeated feedback submissions.
+    learned_doc_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     investigation: Mapped[InvestigationRun] = relationship(back_populates="rca_report")

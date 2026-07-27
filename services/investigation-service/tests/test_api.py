@@ -168,3 +168,112 @@ async def test_graph_produces_citations():
     assert final.get("used_fallback") is True
     for eid in final["report"]["evidence_ids"]:
         assert eid in {e["evidence_id"] for e in final["aggregated_evidence"]}
+
+
+@pytest.mark.asyncio
+async def test_feedback_correct_learns_into_knowledge_base(client: AsyncClient):
+    """A 'correct' verdict pushes the RCA into knowledge-service as a new
+    document; the resulting doc id is recorded on the RCA (idempotency
+    guard against re-ingesting on a second identical feedback call)."""
+    incident_id = uuid.uuid4()
+
+    async def fake_fetch(inc_id: uuid.UUID) -> dict[str, Any]:
+        return {
+            "context": SAMPLE_CONTEXT,
+            "metrics": SAMPLE_CONTEXT["metrics"],
+            "logs": SAMPLE_CONTEXT["logs"],
+            "kubernetes": SAMPLE_CONTEXT["kubernetes"],
+            "deployment": SAMPLE_CONTEXT["deployment"],
+            "system": SAMPLE_CONTEXT["system"],
+            "metadata": SAMPLE_CONTEXT["metadata"],
+        }
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_post(url: str, *, json_body: dict[str, Any], **kwargs):
+        calls.append((url, json_body))
+        if url.endswith("/documents"):
+            return {"id": "learned-doc-123", "title": json_body["title"], "tags": json_body["tags"]}
+        return {"results": []}
+
+    with patch("app.services.orchestrator.fetch_context", side_effect=fake_fetch):
+        with patch(
+            "app.services.resilient_http.get_json_post",
+            new=AsyncMock(side_effect=fake_post),
+        ):
+            inv_resp = await client.post(f"/incidents/{incident_id}/investigate", json={})
+            assert inv_resp.status_code == 200, inv_resp.text
+            investigation_id = inv_resp.json()["investigation_id"]
+
+            fb_resp = await client.post(
+                f"/investigations/{investigation_id}/feedback",
+                json={"status": "correct", "notes": "confirmed via logs", "reviewed_by": "operator"},
+            )
+            assert fb_resp.status_code == 200, fb_resp.text
+            body = fb_resp.json()
+            assert body["feedback_status"] == "correct"
+            assert body["feedback_notes"] == "confirmed via logs"
+            assert body["learned_doc_id"] == "learned-doc-123"
+
+            # A document POST actually happened, with the RCA's root cause in it
+            doc_calls = [c for c in calls if c[0].endswith("/documents")]
+            assert len(doc_calls) == 1
+            assert "root cause" in doc_calls[0][1]["content"].lower()
+
+            # Re-submitting feedback must not re-ingest (idempotency guard)
+            fb_resp2 = await client.post(
+                f"/investigations/{investigation_id}/feedback",
+                json={"status": "correct", "reviewed_by": "operator2"},
+            )
+            assert fb_resp2.status_code == 200
+            assert fb_resp2.json()["learned_doc_id"] == "learned-doc-123"
+            assert len([c for c in calls if c[0].endswith("/documents")]) == 1
+
+
+@pytest.mark.asyncio
+async def test_feedback_incorrect_does_not_learn(client: AsyncClient):
+    incident_id = uuid.uuid4()
+
+    async def fake_fetch(inc_id: uuid.UUID) -> dict[str, Any]:
+        return {
+            "context": SAMPLE_CONTEXT,
+            "metrics": SAMPLE_CONTEXT["metrics"],
+            "logs": SAMPLE_CONTEXT["logs"],
+            "kubernetes": SAMPLE_CONTEXT["kubernetes"],
+            "deployment": SAMPLE_CONTEXT["deployment"],
+            "system": SAMPLE_CONTEXT["system"],
+            "metadata": SAMPLE_CONTEXT["metadata"],
+        }
+
+    calls: list[str] = []
+
+    async def fake_post(url: str, *, json_body: dict[str, Any], **kwargs):
+        calls.append(url)
+        return {"results": []}
+
+    with patch("app.services.orchestrator.fetch_context", side_effect=fake_fetch):
+        with patch(
+            "app.services.resilient_http.get_json_post",
+            new=AsyncMock(side_effect=fake_post),
+        ):
+            inv_resp = await client.post(f"/incidents/{incident_id}/investigate", json={})
+            investigation_id = inv_resp.json()["investigation_id"]
+
+            fb_resp = await client.post(
+                f"/investigations/{investigation_id}/feedback",
+                json={"status": "incorrect", "notes": "wrong diagnosis"},
+            )
+            assert fb_resp.status_code == 200
+            body = fb_resp.json()
+            assert body["feedback_status"] == "incorrect"
+            assert body["learned_doc_id"] is None
+            assert not any(u.endswith("/documents") for u in calls)
+
+
+@pytest.mark.asyncio
+async def test_feedback_without_investigation_404(client: AsyncClient):
+    resp = await client.post(
+        f"/investigations/{uuid.uuid4()}/feedback",
+        json={"status": "correct"},
+    )
+    assert resp.status_code == 404

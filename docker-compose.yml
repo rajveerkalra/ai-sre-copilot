@@ -590,13 +590,25 @@ services:
       SAMPLE_APP_URL: http://sample-app:8080
       EXECUTION_ENABLED: "true"
       ALLOW_MUTATIONS: "false"
-      ALLOW_COMPOSE_RESTART: "false"
+      # Enables genuine `docker restart` on approved RESTART_SERVICE proposals
+      # (see app/services/docker_executor.py). Restricted to
+      # RESTART_ALLOWED_SERVICES below regardless of this flag -- the copilot
+      # can never touch postgres/redis/etc. through this path.
+      ALLOW_COMPOSE_RESTART: "true"
+      RESTART_ALLOWED_SERVICES: "sample-app"
+      DOCKER_CONTAINER_PREFIX: "ai-sre-"
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
       JWT_SECRET: ${JWT_SECRET:-change-me-phase7-local-secret-min-32-chars!!}
       JWT_ISSUER: ${JWT_ISSUER:-ai-sre-copilot}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token}
       OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+    # Docker-out-of-Docker: lets this service restart the sample-app container
+    # via the host's Docker Engine API. Read-write is required for restart
+    # (not just inspect); the allowlist above is the actual safety boundary,
+    # not the socket permission.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - sre-net
     depends_on:
