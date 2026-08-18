@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import check_db, get_db
+from app.deps import require_read, require_write
 from app.schemas.investigation import (
     FeedbackRequest,
     FeedbackResponse,
@@ -32,6 +33,7 @@ async def investigate(
     incident_id: uuid.UUID,
     body: InvestigateRequest | None = None,
     db: AsyncSession = Depends(get_db),
+    _: object = Depends(require_write),
 ) -> InvestigateResponse:
     body = body or InvestigateRequest()
     try:
@@ -67,6 +69,7 @@ async def investigate(
 async def get_investigation(
     investigation_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: object = Depends(require_read),
 ) -> InvestigationDetail:
     try:
         run = await orchestrator.get_investigation(db, investigation_id)
@@ -79,6 +82,7 @@ async def get_investigation(
 async def get_evidence(
     investigation_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: object = Depends(require_read),
 ) -> dict:
     try:
         run = await orchestrator.get_investigation(db, investigation_id)
@@ -103,6 +107,7 @@ async def get_evidence(
 async def get_rca(
     investigation_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: object = Depends(require_read),
 ) -> dict:
     try:
         run = await orchestrator.get_investigation(db, investigation_id)
@@ -133,6 +138,7 @@ async def submit_feedback(
     investigation_id: uuid.UUID,
     body: FeedbackRequest,
     db: AsyncSession = Depends(get_db),
+    principal=Depends(require_write),
 ) -> FeedbackResponse:
     """Operator verdict on an RCA. A "correct" verdict feeds the RCA and its
     grounding evidence back into the knowledge-service as a new citable
@@ -143,7 +149,7 @@ async def submit_feedback(
             investigation_id,
             status=body.status,
             notes=body.notes,
-            reviewed_by=body.reviewed_by,
+            reviewed_by=body.reviewed_by or principal.sub,
         )
     except InvestigationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -156,6 +162,7 @@ async def submit_feedback(
 async def latest_for_incident(
     incident_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: object = Depends(require_read),
 ) -> dict:
     run = await orchestrator.get_latest_for_incident(db, incident_id)
     if run is None:

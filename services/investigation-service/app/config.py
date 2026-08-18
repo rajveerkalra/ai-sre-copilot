@@ -59,6 +59,20 @@ class Settings(BaseSettings):
     auto_collect_context_if_missing: bool = True
     citation_required: bool = True
 
+    # Auth/RBAC. Defaults to disabled so tests and bare `uvicorn app.main:app`
+    # keep working without a token; docker-compose.yml turns this on for the
+    # running stack via AUTH_ENABLED=true, matching remediation-service's
+    # pattern. Previously this service had NO auth config at all -- every
+    # route (including feedback, which writes into the knowledge base) was
+    # reachable by anyone who could hit the port, despite the dashboard's
+    # nginx already forwarding a real Authorization header that was simply
+    # never checked here.
+    auth_enabled: bool = False
+    jwt_secret: str = "change-me-phase7-local-secret-min-32-chars!!"
+    jwt_algorithm: str = "HS256"
+    jwt_issuer: str = "ai-sre-copilot"
+    internal_service_token: str = "local-internal-service-token"
+
     # Deprecated aliases — prefer LLM_* / MODEL_GATEWAY_URL
     ollama_model: str | None = None
     ollama_enabled: bool | None = None

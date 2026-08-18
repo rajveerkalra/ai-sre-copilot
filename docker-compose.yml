@@ -539,6 +539,10 @@ services:
       CACHE_ENABLED: "true"
       PROMPT_VERSION: ${PROMPT_VERSION:-rca-v1}
       AUTO_COLLECT_CONTEXT_IF_MISSING: "true"
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      JWT_SECRET: ${JWT_SECRET:-change-me-phase7-local-secret-min-32-chars!!}
+      JWT_ISSUER: ${JWT_ISSUER:-ai-sre-copilot}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token}
     networks:
       - sre-net
     depends_on:
