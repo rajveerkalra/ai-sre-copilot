@@ -16,6 +16,7 @@ def rule_based_rca(
     text_blob = " ".join(e.get("summary", "") for e in evidence).lower()
     alert = ""
     oomkilled_count = 0
+    timeout_count = 0
     for e in evidence:
         if e["evidence_id"] == "incident-meta":
             alert = str((e.get("raw") or {}).get("alertname") or "").lower()
@@ -25,6 +26,10 @@ def rule_based_rca(
                 oomkilled_count = int(raw.get("oomkilled_count") or 0)
             except (TypeError, ValueError):
                 oomkilled_count = 0
+            try:
+                timeout_count = int(raw.get("timeout_count") or 0)
+            except (TypeError, ValueError):
+                timeout_count = 0
 
     rules = [
         {
@@ -106,7 +111,14 @@ def rule_based_rca(
         },
         {
             "name": "dependency_timeout",
-            "match": lambda: "timeout" in text_blob or "dependency" in text_blob,
+            # NOT `"timeout" in text_blob`: log-summary's auto-generated
+            # summary text always contains the literal substring "timeouts="
+            # (see build_evidence_catalog in evidence.py) regardless of the
+            # actual count, so that check matched almost any incident that
+            # had a log-summary evidence item at all -- caught by an
+            # adversarial golden case (DNS resolution failure, TLS cert
+            # expiry) that has nothing to do with dependency timeouts.
+            "match": lambda: timeout_count > 0 or "dependency" in text_blob,
             "root_cause": "Downstream dependency timeouts",
             "required": ["log-summary"],
             "impact": "504/timeout errors cascading to clients",

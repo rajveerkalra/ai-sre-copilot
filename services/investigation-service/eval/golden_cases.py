@@ -277,4 +277,69 @@ GOLDEN_CASES: list[GoldenCase] = [
         "expected_method": "rule:insufficient_evidence",
         "required_evidence_ids": [],
     },
+    # --- Off-vocabulary adversarial cases -----------------------------------
+    # Unlike the "no signal" case above, these have real, substantial evidence
+    # -- just for an incident type none of the 8 rules were written for. This
+    # is the robustness question docs/eval.md flags as untested: does the
+    # rule engine correctly say "Insufficient evidence" for an unfamiliar
+    # incident, or does it false-positive-match an unrelated rule because its
+    # keyword matching is broader than intended? None of this evidence text
+    # contains any of fallback.py's match keywords (cpu, latency, memory,
+    # oomkilled, timeout, dependency, crashloop*, error_rate/error_storm,
+    # deployment_regression's "deploy-before-incident" id) -- confirmed by
+    # inspection of app/services/fallback.py's `match` lambdas.
+    {
+        "name": "dns_resolution_failure_offvocab",
+        "category": "insufficient_evidence",
+        "context": {
+            "metrics": {"series": {"dns_lookup_failures": {"current": 42, "trend": "up"}}},
+            "logs": {
+                "summary": {
+                    "error_count": 18,
+                    "warning_count": 0,
+                    "timeout_count": 0,
+                    "oomkilled_count": 0,
+                },
+                "top_error_messages": [
+                    {"message": "getaddrinfo ENOTFOUND upstream-service.internal", "count": 18},
+                ],
+                "categories": {},
+            },
+            "kubernetes": {"available": False, "reason": "no kubeconfig", "issues": []},
+            "deployment": {},
+            "system": {"summary": {"host": "local"}},
+            "metadata": _base_metadata("DNSResolutionFailure"),
+        },
+        "expected_root_cause_keywords": ["insufficient evidence"],
+        "min_confidence": 0.0,
+        "expected_method": "rule:insufficient_evidence",
+        "required_evidence_ids": [],
+    },
+    {
+        "name": "tls_certificate_expiry_offvocab",
+        "category": "insufficient_evidence",
+        "context": {
+            "metrics": {"series": {"cert_days_until_expiry": {"current": 2, "trend": "down"}}},
+            "logs": {
+                "summary": {
+                    "error_count": 6,
+                    "warning_count": 0,
+                    "timeout_count": 0,
+                    "oomkilled_count": 0,
+                },
+                "top_error_messages": [
+                    {"message": "x509: certificate has expired or is not yet valid", "count": 6},
+                ],
+                "categories": {},
+            },
+            "kubernetes": {"available": False, "reason": "no kubeconfig", "issues": []},
+            "deployment": {},
+            "system": {"summary": {"host": "local"}},
+            "metadata": _base_metadata("TLSCertificateExpiringSoon", severity="warning"),
+        },
+        "expected_root_cause_keywords": ["insufficient evidence"],
+        "min_confidence": 0.0,
+        "expected_method": "rule:insufficient_evidence",
+        "required_evidence_ids": [],
+    },
 ]

@@ -13,21 +13,47 @@ Neither of these is a substitute for validation against real historical
 incidents at whatever infrastructure this is eventually pointed at. Both are
 regression harnesses, not proof of real-world accuracy.
 
-## 1. Rule-based fallback: 100% on 9 golden cases (CI-gated)
+## 1. Rule-based fallback: 100% on 11 golden cases (CI-gated)
 
 `eval/run_eval.py` and `eval/golden_cases.py` (in `services/investigation-service/`)
-encode 9 synthetic incidents, one per rule in the fallback engine (OOM,
+encode 11 synthetic incidents: one per rule in the fallback engine (OOM,
 crashloop, error storm, latency, CPU, memory, dependency timeout, deployment
-regression, and a no-signal "insufficient evidence" case). `tests/test_eval_golden.py`
-runs this as part of the normal pytest suite, so it's gated in CI
-(`.github/workflows/ci.yml`) on every push — a regression in the rule table
-fails the build.
+regression), a no-signal "insufficient evidence" case, and two **off-vocabulary
+adversarial cases** (see below). `tests/test_eval_golden.py` runs this as part
+of the normal pytest suite, so it's gated in CI (`.github/workflows/ci.yml`)
+on every push — a regression in the rule table fails the build.
 
-This only proves the rule table matches its own test cases; it says nothing
-about how often those 8 hardcoded patterns actually match a real, unforeseen
-incident. They're keyed to fairly specific keyword matches (see `fallback.py`)
-and were written against this project's own sample-app fault-injection
-vocabulary.
+This mostly proves the rule table matches its own test cases; it says
+relatively little about how often those 8 hardcoded patterns actually match a
+real, unforeseen incident. They're keyed to fairly specific keyword matches
+(see `fallback.py`) and were written against this project's own sample-app
+fault-injection vocabulary.
+
+### A real false-positive bug the adversarial cases caught
+
+Two cases were added specifically to test the opposite failure mode from
+everything else in this doc: does the rule engine correctly say "Insufficient
+evidence" for an incident type none of the 8 rules were written for, or does
+it false-positive-match an unrelated rule because a keyword check is broader
+than intended? A DNS resolution failure and a TLS certificate expiry case
+(neither containing any of the rules' match keywords, by inspection) were
+added on the assumption they'd both cleanly return "Insufficient evidence".
+
+They didn't. Both were misdiagnosed as **"Downstream dependency timeouts"**
+at 84% confidence. The cause: the `dependency_timeout` rule matched on
+`"timeout" in text_blob`, but the log-summary evidence item's
+auto-generated text is always `f"errors={n} warnings={n} timeouts={n}
+oomkilled={n}"` — the literal substring `"timeouts="` is present **whenever
+timeout_count is 0 just as much as when it's 50**. The rule fired on almost
+any incident with a log-summary item at all, regardless of whether timeouts
+actually occurred. Fixed by checking the real `timeout_count > 0` instead of
+matching on the rendered summary string; the `dependency_timeout_cascade`
+case (which has a genuine timeout_count of 5) still passes after the fix, and
+both adversarial cases now correctly return "Insufficient evidence".
+
+This is the kind of bug golden cases built only from "here's what each rule
+*should* match" can never catch — it took a case deliberately designed to
+match *none* of the rules to surface it.
 
 ## 2. LLM synthesis path: measured 0% → 100% (manually, not CI-gated)
 
@@ -138,11 +164,14 @@ MODEL_GATEWAY_URL=http://localhost:8040 LLM_MODEL=llama3.2 LLM_TIMEOUT_SECONDS=1
 
 ## 4. What these numbers do NOT tell you
 
-- **This is not a real-world accuracy measurement.** 8 golden cases, all
-  synthetic, all designed around this project's own sample-app fault
-  vocabulary. A 100% score here means the prompt fix works on the cases we
-  wrote, not that the system will correctly diagnose an unfamiliar incident
-  on unfamiliar infrastructure.
+- **This is not a real-world accuracy measurement.** 11 golden cases, all
+  synthetic. The 8 non-trivial ones are still designed around this project's
+  own sample-app fault vocabulary; the 2 adversarial cases prove the rule
+  engine doesn't false-positive on totally unrelated incident types, but
+  that's a much narrower claim than "handles unfamiliar infrastructure." A
+  100% score here means the prompt fix works on the cases we wrote and the
+  rule engine doesn't false-fire on two specific off-vocabulary probes — not
+  that the system will correctly diagnose an arbitrary unfamiliar incident.
 - **No historical-incident validation exists.** There is no golden set built
   from real past incidents with known, agreed-upon root causes. Before
   pointing this at real infrastructure, build one from your own postmortems
