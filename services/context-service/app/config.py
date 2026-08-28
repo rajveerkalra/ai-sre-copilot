@@ -52,6 +52,15 @@ class Settings(BaseSettings):
     # Default service label when incident metadata lacks service
     default_service: str = "sample-app"
 
+    # Event bus (Redis Streams) — consumes "incident created" events
+    # published by incident-service, so context collection survives this
+    # service being briefly down at the moment an incident fires (the event
+    # waits in the stream instead of being lost). See libs/common/eventbus.py.
+    redis_url: str = "redis://redis:6379/0"
+    event_bus_enabled: bool = True
+    incidents_stream: str = "incidents.created"
+    incidents_consumer_group: str = "context-collectors"
+
 
 @lru_cache
 def get_settings() -> Settings:

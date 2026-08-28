@@ -12,6 +12,7 @@ httpx==0.28.1
 tenacity==9.0.0
 kubernetes==31.0.0
 docker==7.1.0
+redis==5.2.1
 
 # Dev / test
 pytest==8.3.4

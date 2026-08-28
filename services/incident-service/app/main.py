@@ -67,8 +67,13 @@ async def lifespan(app: FastAPI):
         run_migrations()
         log.info("migrations_complete")
 
+    from app.services.eventbus_client import close_event_bus, connect_event_bus
+
+    await connect_event_bus()
+
     log.info("service_starting", version=__version__)
     yield
+    await close_event_bus()
     log.info("service_stopping")
 
 

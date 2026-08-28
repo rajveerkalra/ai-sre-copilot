@@ -236,3 +236,50 @@ has learned as a plain document in the knowledge base). It's the
 appropriate scale of "learning" for a project at this incident volume — see
 the roadmap discussion in the project README for when fine-tuning would
 become the right next step.
+
+### Durable event dispatch (Redis Streams, not Kafka)
+
+Incident creation used to trigger context collection via a fire-and-forget
+HTTP call inside a FastAPI `BackgroundTask` (`incident-service`'s
+`trigger_context_collection`): if that single request failed for any reason
+— context-service mid-restart, a network blip — the event was gone, logged
+as a warning, nothing ever retried it.
+
+`incident-service` now publishes an `incident.created` event to a Redis
+Stream (`libs/common/eventbus.py`) instead, and `context-service` runs a
+background consumer (`app/services/eventbus_consumer.py`) reading it via a
+named consumer group. This buys the two things a bus is actually for here:
+the event survives the consumer being briefly down (it waits in the stream,
+not lost), and a transient failure during processing leaves the entry
+unacked for redelivery rather than dropping it — a permanent failure
+(incident not found upstream) is acked so it isn't retried forever. The old
+HTTP path is kept as an explicit fallback: if the bus itself is unreachable,
+`publish()` returns `None` and the direct call fires instead, so a Redis
+outage degrades to the old behavior rather than losing events outright.
+
+**Why Redis Streams and not Kafka**, since both were on the table: at this
+project's real message volume — a handful of incidents at a time on a
+single host — a Kafka broker (plus ZooKeeper/KRaft) is a lot of operational
+weight for no throughput this system will ever need. Redis is already
+running here for caching, so this was marginal cost, not new infrastructure,
+and Streams' consumer groups already give durability and redelivery. The
+bus's publish/consume surface is deliberately narrow (3 methods) so a
+Kafka-backed implementation could be dropped in behind the same interface
+later if real throughput ever justified it, without touching caller code —
+matching this project's stubbed `ROLLBACK`/`SCALE` actions is not enough;
+this is a real, working default, with a real off-ramp if it stops being the
+right one.
+
+**Verified live**, not just unit-tested: triggered a real `error_storm`
+fault, confirmed the real Alertmanager alert fired and reached
+incident-service, confirmed the event landed in the real Redis stream
+(`XRANGE` showed the actual `incident_id`), confirmed the consumer group
+delivered and acked it (`entries-read: 1`, `pending: 0`), and confirmed
+context-service actually collected real evidence for that incident
+end-to-end through the new path — not the old HTTP fallback.
+
+Also found and fixed the same Dockerfile `PYTHONPATH` bug documented earlier
+in this doc for `investigation-service` — `context-service`'s Dockerfile had
+the identical `/app:/libs` mistake (one directory level too deep for `import
+libs.common` to resolve), invisible until this was the first thing in that
+service to actually import from `libs.common.eventbus` at runtime.

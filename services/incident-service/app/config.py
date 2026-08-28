@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     context_service_enabled: bool = True
     context_service_timeout_seconds: float = 120.0
 
+    # Event bus (Redis Streams) — durable dispatch of "incident created" so
+    # context collection survives context-service being briefly down,
+    # instead of the old fire-and-forget HTTP call silently dropping the
+    # event. See libs/common/eventbus.py for why Redis over Kafka here.
+    redis_url: str = "redis://redis:6379/0"
+    event_bus_enabled: bool = True
+    incidents_stream: str = "incidents.created"
+
     # Phase 7
     auth_enabled: bool = False
     jwt_secret: str = "change-me-phase7-local-secret-min-32-chars!!"
