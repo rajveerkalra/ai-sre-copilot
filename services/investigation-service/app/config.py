@@ -59,6 +59,30 @@ class Settings(BaseSettings):
     auto_collect_context_if_missing: bool = True
     citation_required: bool = True
 
+    # Auto-dispatch: consumes context-service's "context.collected" events
+    # instead of requiring a manual POST /investigate call per incident --
+    # necessary once incident volume is more than a human can click through.
+    event_bus_enabled: bool = True
+    context_collected_stream: str = "context.collected"
+    dispatch_consumer_group: str = "investigation-dispatch"
+    investigation_queue_name: str = "investigation:priority_queue"
+    # Bounded worker pool draining the priority queue. This is the actual
+    # throughput ceiling: LLM investigation is compute-bound (one Ollama
+    # instance serializes generations), so raising this only helps up to
+    # what the model backend can genuinely run concurrently -- it does not
+    # make more compute appear. Tune to match real backend capacity (a
+    # hosted API with a high concurrent-request limit can go much higher
+    # than a single local Ollama instance).
+    max_concurrent_investigations: int = 2
+    # Severity -> priority rank (lower rank drains first). Unknown severities
+    # sort after every named one, never silently promoted to "critical".
+    severity_priority_rank: dict[str, int] = {
+        "critical": 0,
+        "warning": 1,
+        "info": 2,
+    }
+    default_severity_rank: int = 99
+
     # Auth/RBAC. Defaults to disabled so tests and bare `uvicorn app.main:app`
     # keep working without a token; docker-compose.yml turns this on for the
     # running stack via AUTH_ENABLED=true, matching remediation-service's

@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     prometheus_url: str = "http://prometheus:9090"
     loki_url: str = "http://loki:3100"
     incident_service_url: str = "http://incident-service:8000"
+    # incident-service enforces auth on GET /incidents/{id} (Phase 7). This
+    # service had no service-mesh token at all until now, meaning every call
+    # to fetch_incident_metadata() has been silently failing with 401 and
+    # falling back to unknown severity/service/alertname for every incident
+    # -- found by tracing a "severity": "unknown" event that should have been
+    # "critical" through to context-service's own logs.
+    internal_service_token: str = "local-internal-service-token"
 
     # Collector tuning
     collector_timeout_seconds: float = 30.0
@@ -60,6 +67,9 @@ class Settings(BaseSettings):
     event_bus_enabled: bool = True
     incidents_stream: str = "incidents.created"
     incidents_consumer_group: str = "context-collectors"
+    # Published after a successful collection so investigation-service can
+    # auto-dispatch instead of waiting for a manual /investigate call.
+    context_collected_stream: str = "context.collected"
 
 
 @lru_cache

@@ -41,6 +41,17 @@ PROVIDER_FAILURES_TOTAL = Counter(
     "Upstream provider failures",
     ["provider", "reason"],
 )
+INVESTIGATION_QUEUE_DEPTH = Gauge(
+    "investigation_queue_depth",
+    "Incidents waiting in the priority queue for a worker slot -- sustained "
+    "growth means incoming incident rate exceeds investigation throughput "
+    "(see max_concurrent_investigations in config.py).",
+)
+INVESTIGATIONS_DEQUEUED_TOTAL = Counter(
+    "investigations_dequeued_total",
+    "Investigations pulled off the priority queue by a worker",
+    ["severity"],
+)
 
 
 def init_metrics(version: str, environment: str) -> None:

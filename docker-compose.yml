@@ -148,6 +148,8 @@ services:
       EVENT_BUS_ENABLED: "true"
       INCIDENTS_STREAM: incidents.created
       INCIDENTS_CONSUMER_GROUP: context-collectors
+      CONTEXT_COLLECTED_STREAM: context.collected
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -550,6 +552,14 @@ services:
       CACHE_ENABLED: "true"
       PROMPT_VERSION: ${PROMPT_VERSION:-rca-v1}
       AUTO_COLLECT_CONTEXT_IF_MISSING: "true"
+      # Auto-dispatch: consumes context-service's "context.collected" events
+      # and runs investigations through a bounded, severity-prioritized
+      # worker pool instead of requiring a manual /investigate call per
+      # incident. See app/services/dispatch.py.
+      EVENT_BUS_ENABLED: "true"
+      CONTEXT_COLLECTED_STREAM: context.collected
+      DISPATCH_CONSUMER_GROUP: investigation-dispatch
+      MAX_CONCURRENT_INVESTIGATIONS: ${MAX_CONCURRENT_INVESTIGATIONS:-2}
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
       JWT_SECRET: ${JWT_SECRET:-change-me-phase7-local-secret-min-32-chars!!}
       JWT_ISSUER: ${JWT_ISSUER:-ai-sre-copilot}

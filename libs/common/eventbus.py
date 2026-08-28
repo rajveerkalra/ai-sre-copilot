@@ -134,3 +134,87 @@ class RedisStreamEventBus:
             await self._client.xack(stream, group, entry_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("eventbus_ack_failed", stream=stream, entry_id=entry_id, error=str(exc))
+
+
+class RedisPriorityQueue:
+    """Durable priority queue over a Redis sorted set (ZADD / ZPOPMIN).
+
+    Built for exactly one problem: bounding concurrency into a slow,
+    compute-bound stage (LLM investigation) while still accepting unlimited
+    work instantly and processing it in the right order. Events land in the
+    stream/queue as fast as they arrive; a small, fixed pool of workers
+    drains the queue at whatever rate the actual compute (Ollama, a hosted
+    LLM's rate limit) can sustain, always taking the lowest-score (highest
+    priority) item next. Severity should map to a low score for "process
+    first" -- see investigation-service's dispatch consumer for the mapping.
+
+    The sorted set itself is the durable queue: an item survives every
+    worker being down (it just waits), and ZPOPMIN is atomic, so two workers
+    racing for the same item can never both get it.
+    """
+
+    def __init__(self, redis_url: str, *, enabled: bool = True) -> None:
+        self.redis_url = redis_url
+        self.enabled = enabled
+        self._client = None
+
+    async def connect(self) -> None:
+        if not self.enabled:
+            return
+        try:
+            from redis import asyncio as aioredis
+
+            self._client = aioredis.from_url(
+                self.redis_url, encoding="utf-8", decode_responses=True
+            )
+            await self._client.ping()
+            logger.info("priority_queue_connected", url=self.redis_url)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("priority_queue_unavailable", error=str(exc))
+            self._client = None
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    @property
+    def available(self) -> bool:
+        return self.enabled and self._client is not None
+
+    async def enqueue(self, queue: str, member: str, priority: float) -> bool:
+        """Add `member` (a string, e.g. a JSON-encoded task) with the given
+        priority score (lower = dequeued sooner). Returns False if the queue
+        is unavailable."""
+        if not self.available:
+            return False
+        try:
+            await self._client.zadd(queue, {member: priority})
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("priority_queue_enqueue_failed", queue=queue, error=str(exc))
+            return False
+
+    async def dequeue(self, queue: str) -> str | None:
+        """Atomically pop and return the lowest-priority-score member, or
+        None if the queue is empty or unavailable."""
+        if not self.available:
+            return None
+        try:
+            popped = await self._client.zpopmin(queue, count=1)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("priority_queue_dequeue_failed", queue=queue, error=str(exc))
+            return None
+        if not popped:
+            return None
+        member, _score = popped[0]
+        return member
+
+    async def size(self, queue: str) -> int:
+        if not self.available:
+            return 0
+        try:
+            return await self._client.zcard(queue)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("priority_queue_size_failed", queue=queue, error=str(exc))
+            return 0

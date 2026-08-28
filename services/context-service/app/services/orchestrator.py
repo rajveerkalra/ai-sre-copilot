@@ -43,9 +43,10 @@ async def fetch_incident_metadata(incident_id: uuid.UUID) -> dict[str, Any]:
     """Pull incident metadata from incident-service (best effort)."""
     settings = get_settings()
     url = f"{settings.incident_service_url.rstrip('/')}/incidents/{incident_id}"
+    headers = {"X-Service-Token": settings.internal_service_token} if settings.internal_service_token else {}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
+            resp = await client.get(url, headers=headers)
             if resp.status_code == 404:
                 raise IncidentLookupError(f"Incident {incident_id} not found")
             resp.raise_for_status()
@@ -224,6 +225,23 @@ async def collect_for_incident(
         success_count=success_count,
         fail_count=fail_count,
     )
+
+    if status in (ContextStatus.COMPLETED, ContextStatus.PARTIAL):
+        # Dispatch to investigation-service's priority queue -- see
+        # eventbus_publish.py. Fires regardless of whether collection was
+        # triggered via the HTTP route or the event-bus consumer, since both
+        # paths call this one function. Best-effort: a publish failure here
+        # never fails the collection itself (the context is already saved
+        # and queryable; an operator/automation can still trigger
+        # investigation manually via the API if this dispatch is lost).
+        from app.services.eventbus_publish import publish_context_collected
+
+        await publish_context_collected(
+            incident_id=incident_id,
+            severity=meta.get("severity") or "unknown",
+            correlation_id=correlation_id,
+        )
+
     return ctx
 
 

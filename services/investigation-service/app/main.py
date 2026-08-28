@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -51,14 +52,30 @@ async def lifespan(app: FastAPI):
 
         run_migrations()
         log.info("migrations_complete")
+    from app.services.dispatch import run_dispatch_consumer, run_investigation_worker
+
+    stop_event = asyncio.Event()
+    background_tasks = [asyncio.create_task(run_dispatch_consumer(stop_event))]
+    for worker_id in range(settings.max_concurrent_investigations):
+        background_tasks.append(
+            asyncio.create_task(run_investigation_worker(worker_id, stop_event))
+        )
+
     log.info(
         "service_starting",
         version=__version__,
         llm_model=settings.llm_model,
         llm_enabled=settings.llm_enabled,
         model_gateway=settings.model_gateway_url,
+        max_concurrent_investigations=settings.max_concurrent_investigations,
     )
     yield
+    stop_event.set()
+    for task in background_tasks:
+        try:
+            await asyncio.wait_for(task, timeout=5.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            task.cancel()
     log.info("service_stopping")
 
 

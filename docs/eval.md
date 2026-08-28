@@ -283,3 +283,72 @@ in this doc for `investigation-service` — `context-service`'s Dockerfile had
 the identical `/app:/libs` mistake (one directory level too deep for `import
 libs.common` to resolve), invisible until this was the first thing in that
 service to actually import from `libs.common.eventbus` at runtime.
+
+### Auto-dispatch and a bounded, priority-ordered worker pool
+
+The event bus above only replaced *one* fragile hop (incident → context
+collection). The next one was arguably worse: nothing automatically
+triggered investigation after context collection finished at all —
+`POST /incidents/{id}/investigate` had to be called manually, per incident,
+by an operator or by whatever curled it during testing. That doesn't survive
+contact with real incident volume.
+
+`context-service` now publishes a `context.collected` event after a
+successful (or partial) collection (`app/services/eventbus_publish.py`).
+`investigation-service` runs two kinds of background task
+(`app/services/dispatch.py`), both started in its lifespan:
+
+- **`run_dispatch_consumer`** — durably ingests `context.collected` via a
+  Redis Streams consumer group and enqueues each incident into a
+  Redis-backed priority queue (`RedisPriorityQueue`, a sorted set:
+  `ZADD`/`ZPOPMIN`), scored by severity (`critical` first, then `warning`,
+  then `info`, unknown severities last) with a timestamp tiebreaker so
+  same-severity incidents still drain oldest-first. Enqueueing is near-
+  instant, so this absorbs an arbitrarily large burst of incidents without
+  ever blocking on investigation itself.
+- **`run_investigation_worker`** × `MAX_CONCURRENT_INVESTIGATIONS` (default
+  2) — a fixed-size pool that drains the priority queue and calls the exact
+  same `run_investigation()` the manual HTTP route already used.
+
+**This is a hard throughput ceiling by design, not an oversight.** LLM
+investigation is compute-bound — one Ollama instance serializes generations
+— so raising the worker count only helps up to what the model backend can
+genuinely run concurrently; past that, workers just queue behind each other
+on the same backend. The honest fix for "thousands of incidents at once" is
+not more workers, it's more/faster inference capacity (a hosted API with a
+real concurrent-request limit, or a fleet of Ollama instances behind
+model-gateway) — this queue is what makes that scale-up meaningful instead
+of cosmetic: without it, throwing more compute at the problem wouldn't help
+either, because nothing would route incidents to it in priority order or
+prevent unbounded concurrent LLM calls from overwhelming the backend anyway.
+
+Two Prometheus metrics make this observable rather than a black box:
+`investigation_queue_depth` (sustained growth = incoming rate exceeding
+processing throughput — the signal to scale inference capacity) and
+`investigations_dequeued_total{severity=...}` (proves the priority ordering
+is actually happening, not just configured).
+
+**A second, more serious auth bug found while verifying this live**: the
+first real end-to-end run showed `severity: "unknown"` on the published
+event for an incident that was genuinely `critical`. Traced to
+`context-service` never having sent a service-mesh token when calling
+`incident-service`'s `GET /incidents/{id}` — which enforces auth (Phase 7) —
+so every single call had been silently 401'ing and falling back to
+`{"severity": "unknown", "service": <default>, "alertname": ""}` for the
+entire time auth has been enabled in the real stack, masked by a broad
+`except Exception` that logged a warning and moved on rather than
+surfacing it. This wasn't just wrong severity for queue ordering — it meant
+every RCA's `incident-meta` evidence and every rule keyed on `alertname` was
+working from degraded metadata this whole time. Fixed by adding
+`internal_service_token` to context-service's config and sending
+`X-Service-Token` on that call (matching the pattern `remediation-service`
+already used correctly). Verified live: re-collected context for the same
+incident, the republished event correctly showed `severity: "critical"`.
+
+**Verified live, end to end, with no manual `/investigate` call**: fired a
+real fault, watched the incident auto-flow through both event streams,
+confirmed the priority queue and consumer groups drained correctly
+(`entries-read` / `pending: 0` on both), and confirmed
+`investigations_dequeued_total{severity="critical"} 1.0` — a real,
+correctly-prioritized, fully automatic investigation, not a manually
+triggered one.

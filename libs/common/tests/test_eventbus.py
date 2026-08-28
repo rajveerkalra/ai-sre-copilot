@@ -4,16 +4,32 @@ from __future__ import annotations
 
 import pytest
 
-from libs.common.eventbus import RedisStreamEventBus
+from libs.common.eventbus import RedisPriorityQueue, RedisStreamEventBus
 
 
 class _FakeAioRedis:
-    """Minimal in-memory stand-in for redis.asyncio's stream commands."""
+    """Minimal in-memory stand-in for redis.asyncio's stream + sorted-set commands."""
 
     def __init__(self):
         self.streams: dict[str, list[tuple[str, dict]]] = {}
         self.groups: dict[tuple[str, str], set[str]] = {}
+        self.zsets: dict[str, dict[str, float]] = {}
         self._seq = 0
+
+    async def zadd(self, key, mapping):
+        self.zsets.setdefault(key, {}).update(mapping)
+
+    async def zpopmin(self, key, count=1):
+        z = self.zsets.get(key, {})
+        if not z:
+            return []
+        items = sorted(z.items(), key=lambda kv: kv[1])[:count]
+        for member, _score in items:
+            del z[member]
+        return items
+
+    async def zcard(self, key):
+        return len(self.zsets.get(key, {}))
 
     async def ping(self):
         return True
@@ -116,3 +132,49 @@ async def test_ensure_group_is_idempotent(fake_redis):
     await bus.connect()
     await bus.ensure_group("s", "g")
     await bus.ensure_group("s", "g")  # must not raise on the second call
+
+
+# --- RedisPriorityQueue ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_priority_queue_disabled_is_a_safe_noop():
+    q = RedisPriorityQueue("redis://unused", enabled=False)
+    await q.connect()
+    assert q.available is False
+    assert await q.enqueue("q", "item", priority=1.0) is False
+    assert await q.dequeue("q") is None
+    assert await q.size("q") == 0
+
+
+@pytest.mark.asyncio
+async def test_priority_queue_dequeues_lowest_score_first(fake_redis):
+    q = RedisPriorityQueue("redis://fake", enabled=True)
+    await q.connect()
+    assert q.available is True
+
+    # Enqueue out of order; a "critical" incident (low score) must still
+    # come out before earlier-enqueued "warning"/"info" ones.
+    await q.enqueue("investigation:queue", "warning-1", priority=200.0)
+    await q.enqueue("investigation:queue", "info-1", priority=300.0)
+    await q.enqueue("investigation:queue", "critical-1", priority=100.0)
+
+    assert await q.size("investigation:queue") == 3
+    assert await q.dequeue("investigation:queue") == "critical-1"
+    assert await q.dequeue("investigation:queue") == "warning-1"
+    assert await q.size("investigation:queue") == 1
+    assert await q.dequeue("investigation:queue") == "info-1"
+    assert await q.dequeue("investigation:queue") is None  # now empty
+
+
+@pytest.mark.asyncio
+async def test_priority_queue_ties_break_fifo_by_timestamp_component(fake_redis):
+    # Caller convention (see investigation-service): score = severity_rank * 1e15 + timestamp,
+    # so same-severity items still drain oldest-first.
+    q = RedisPriorityQueue("redis://fake", enabled=True)
+    await q.connect()
+    base = 5_000_000_000 * 1e6  # critical rank component
+    await q.enqueue("q", "second", priority=base + 200)
+    await q.enqueue("q", "first", priority=base + 100)
+    assert await q.dequeue("q") == "first"
+    assert await q.dequeue("q") == "second"
