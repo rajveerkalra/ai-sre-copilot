@@ -95,6 +95,15 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token}
       OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      # Outbound notifications -- default to this repo's own local test
+      # targets (webhook-sink, MailHog) so the integration is live-verifiable
+      # out of the box; SLACK_WEBHOOK_URL is left unset since a real one
+      # requires the user's own Slack workspace.
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-http://webhook-sink:8000/notifications}
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_TO: ${SMTP_TO:-oncall@ai-sre-copilot.local}
     networks:
       - sre-net
     depends_on:
@@ -104,6 +113,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      webhook-sink:
+        condition: service_started
+      mailhog:
+        condition: service_started
     healthcheck:
       test:
         [
@@ -564,6 +577,14 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-phase7-local-secret-min-32-chars!!}
       JWT_ISSUER: ${JWT_ISSUER:-ai-sre-copilot}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-internal-service-token}
+      # Outbound notifications on RCA completion -- see incident-service's
+      # equivalent block above for why these default to this repo's own
+      # local test targets.
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-http://webhook-sink:8000/notifications}
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_TO: ${SMTP_TO:-oncall@ai-sre-copilot.local}
     networks:
       - sre-net
     depends_on:
@@ -577,6 +598,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      webhook-sink:
+        condition: service_started
+      mailhog:
+        condition: service_started
     healthcheck:
       test:
         [
@@ -769,6 +794,47 @@ services:
     labels:
       ai-sre-copilot.component: otel-collector
       ai-sre-copilot.phase: "7"
+
+  webhook-sink:
+    build:
+      context: .
+      dockerfile: services/webhook-sink/Dockerfile
+    image: ai-sre-copilot/webhook-sink:phase1
+    container_name: ai-sre-webhook-sink
+    ports:
+      - "${WEBHOOK_SINK_PORT:-8090}:8000"
+    networks:
+      - sre-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: webhook-sink
+      ai-sre-copilot.phase: "1"
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: ai-sre-mailhog
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"
+      - "${MAILHOG_UI_PORT:-8025}:8025"
+    networks:
+      - sre-net
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      ai-sre-copilot.component: mailhog
 
 networks:
   sre-net:

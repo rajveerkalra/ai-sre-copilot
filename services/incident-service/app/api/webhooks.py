@@ -13,6 +13,7 @@ from app.schemas.incident import WebhookIngestResponse
 from app.services import incident_service
 from app.services.context_client import trigger_context_collection
 from app.services.eventbus_client import get_event_bus
+from app.services.notify_client import get_notification_dispatcher
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -44,6 +45,23 @@ async def _dispatch_context_collection(incident_id, alertname: str, background_t
     background_tasks.add_task(trigger_context_collection, incident_id)
 
 
+async def _notify_incident_created(item, background_tasks: BackgroundTasks) -> None:
+    """Fire outbound notifications (Slack/webhook/email) off the request
+    path -- see libs/common/notify.py for the soft-fail contract each
+    backend follows."""
+    dispatcher = get_notification_dispatcher()
+    if not dispatcher.any_enabled:
+        return
+    background_tasks.add_task(
+        dispatcher.notify_incident_created,
+        incident_id=str(item.incident_id),
+        title=item.title,
+        severity=item.severity,
+        service=item.service,
+        alertname=item.alertname,
+    )
+
+
 @router.post("/alertmanager", response_model=WebhookIngestResponse)
 async def alertmanager_webhook(
     payload: AlertmanagerWebhook,
@@ -63,5 +81,6 @@ async def alertmanager_webhook(
     for item in result.results:
         if item.action == "created":
             await _dispatch_context_collection(item.incident_id, item.alertname, background_tasks)
+            await _notify_incident_created(item, background_tasks)
 
     return result

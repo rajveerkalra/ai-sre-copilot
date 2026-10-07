@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from typing import Any
@@ -24,6 +25,7 @@ from app.models import (
     RCAReport,
 )
 from app.services.evidence import build_evidence_catalog
+from app.services.notify_client import get_notification_dispatcher
 
 logger = structlog.get_logger(__name__)
 
@@ -84,6 +86,32 @@ async def fetch_context(incident_id: uuid.UUID) -> dict[str, Any]:
             return payload
     finally:
         await cache.close()
+
+
+def _fire_rca_notification(
+    *,
+    incident_id: uuid.UUID,
+    investigation_id: uuid.UUID,
+    root_cause: str,
+    confidence: float,
+    used_fallback: bool,
+) -> None:
+    """Fire-and-forget outbound notification for a completed RCA -- never
+    allowed to slow down or fail the investigation itself. See
+    libs/common/notify.py for the soft-fail contract each backend follows."""
+    dispatcher = get_notification_dispatcher()
+    if not dispatcher.any_enabled:
+        return
+    task = asyncio.create_task(
+        dispatcher.notify_rca_complete(
+            incident_id=str(incident_id),
+            investigation_id=str(investigation_id),
+            root_cause=root_cause,
+            confidence=confidence,
+            used_fallback=used_fallback,
+        )
+    )
+    task.add_done_callback(lambda t: t.exception())
 
 
 async def run_investigation(
@@ -230,6 +258,14 @@ async def run_investigation(
             used_fallback=used_fallback,
             duration_ms=run.duration_ms,
         )
+        if status == InvestigationStatus.COMPLETED:
+            _fire_rca_notification(
+                incident_id=incident_id,
+                investigation_id=run.id,
+                root_cause=root_cause,
+                confidence=confidence,
+                used_fallback=used_fallback,
+            )
         return run
     except Exception as exc:
         duration_ms = (time.perf_counter() - started) * 1000

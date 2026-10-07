@@ -82,6 +82,9 @@ class WebhookProcessResult(BaseModel):
     action: str  # created | deduplicated | resolved
     occurrence_count: int
     alertname: str
+    title: str = ""
+    severity: str = ""
+    service: str = ""
 
 
 class WebhookIngestResponse(BaseModel):

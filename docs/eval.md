@@ -352,3 +352,72 @@ confirmed the priority queue and consumer groups drained correctly
 `investigations_dequeued_total{severity="critical"} 1.0` — a real,
 correctly-prioritized, fully automatic investigation, not a manually
 triggered one.
+
+## Outbound notifications (Slack / webhook / email)
+
+`libs/common/notify.py` fans one logical event out to up to three
+independently-optional backends (`SlackNotifier`, `WebhookNotifier`,
+`EmailNotifier`), following this codebase's established convention for
+every external integration: unconfigured or unreachable is a soft failure,
+logged and swallowed, never raised into the caller. A notification is a
+side-effect of something that already happened — it must never be able to
+fail the incident creation or investigation it's reporting on.
+
+- `incident-service` fires `notify_incident_created` (as a `BackgroundTask`,
+  off the request path) when `_process_parsed_alert` returns `action ==
+  "created"` — not on dedup or resolve.
+- `investigation-service` fires `notify_rca_complete` (as an
+  `asyncio.create_task`, fire-and-forget so a slow/unreachable backend can
+  never add latency to `run_investigation`) when a run reaches
+  `InvestigationStatus.COMPLETED` — not on `INSUFFICIENT_EVIDENCE` or
+  `FAILED`.
+
+Both call sites check `dispatcher.any_enabled` first, so with nothing
+configured (Slack/webhook/SMTP all unset) this is a no-op, not three wasted
+network calls per event.
+
+**Real Slack workspace**: requires the user's own Incoming Webhook URL in
+`SLACK_WEBHOOK_URL` — never fabricated here. The payload shape
+(`{"text": ...}`) is exactly what Slack's Incoming Webhooks expect, and is
+verified below against `webhook-sink` (same wire format a real Slack
+receiver gets).
+
+**Webhook and email are verified live against real local infrastructure
+that ships with `docker-compose.yml`**, not mocked:
+- `webhook-sink` gained a generic `POST /notifications` sink
+  (`services/webhook-sink/app.py`) alongside its existing Alertmanager
+  endpoint, purely to make `WebhookNotifier` end-to-end testable without a
+  real receiver.
+- `mailhog` (the `mailhog/mailhog:latest` image) is a real local SMTP
+  server — `EmailNotifier` talks genuine SMTP to it via `smtplib`, no
+  mocking.
+
+Live test performed: fired a real Alertmanager webhook
+(`alertname=LiveNotifyTest`, `severity=critical`) at `incident-service`,
+then ran a real investigation against the resulting incident.
+
+`incident.created` — both channels received the real payload:
+```
+webhook-sink: {"event": "incident.created", "data": {"incident_id": "f4423d59-...", "title": "LiveNotifyTest firing", "severity": "critical", "service": "sample-app", "alertname": "LiveNotifyTest"}}
+mailhog:      Subject: "[AI SRE Copilot] New incident: LiveNotifyTest firing", To: oncall@ai-sre-copilot.local
+```
+
+`rca.completed` — fired after the real investigation returned
+`root_cause: "Elevated application error rate (error storm)"`,
+`confidence: 85.0`:
+```
+webhook-sink: {"event": "rca.completed", "data": {"incident_id": "f4423d59-...", "investigation_id": "1a1a18a7-...", "root_cause": "Elevated application error rate (error storm)", "confidence": 85.0, "used_fallback": true}}
+mailhog:      Subject: "[AI SRE Copilot] RCA complete: Elevated application error rate (error storm)"
+```
+
+Both events, both channels, real delivery — not asserted, not mocked at the
+transport layer (only the outer service test suite mocks `httpx`/`smtplib`
+per the codebase's usual unit-test convention; this section is the live
+proof those mocks match reality).
+
+Automated coverage: `libs/common/tests/test_notify.py` (12 tests — per-
+backend disabled/enabled/failure-mode behavior, dispatcher fan-out never
+raises), `services/incident-service/tests/test_notify_dispatch.py` (3
+tests — dispatch fires on create, not on dedup, not when unconfigured),
+`services/investigation-service/tests/test_notify_dispatch.py` (2 tests —
+dispatch fires on a completed investigation, not when unconfigured).

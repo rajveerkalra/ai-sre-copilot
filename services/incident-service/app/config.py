@@ -47,6 +47,18 @@ class Settings(BaseSettings):
     event_bus_enabled: bool = True
     incidents_stream: str = "incidents.created"
 
+    # Outbound notifications (libs/common/notify.py) -- each backend is
+    # independently optional; empty/unset = disabled, never an error.
+    slack_webhook_url: str = ""
+    notify_webhook_url: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 25
+    smtp_from: str = "ai-sre-copilot@localhost"
+    smtp_to: str = ""
+    smtp_use_tls: bool = False
+    smtp_username: str = ""
+    smtp_password: str = ""
+
     # Phase 7
     auth_enabled: bool = False
     jwt_secret: str = "change-me-phase7-local-secret-min-32-chars!!"

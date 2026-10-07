@@ -83,6 +83,18 @@ class Settings(BaseSettings):
     }
     default_severity_rank: int = 99
 
+    # Outbound notifications (libs/common/notify.py) -- each backend is
+    # independently optional; empty/unset = disabled, never an error.
+    slack_webhook_url: str = ""
+    notify_webhook_url: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 25
+    smtp_from: str = "ai-sre-copilot@localhost"
+    smtp_to: str = ""
+    smtp_use_tls: bool = False
+    smtp_username: str = ""
+    smtp_password: str = ""
+
     # Auth/RBAC. Defaults to disabled so tests and bare `uvicorn app.main:app`
     # keep working without a token; docker-compose.yml turns this on for the
     # running stack via AUTH_ENABLED=true, matching remediation-service's

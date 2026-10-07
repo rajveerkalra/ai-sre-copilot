@@ -131,6 +131,9 @@ async def _process_parsed_alert(
             action="created",
             occurrence_count=incident.occurrence_count,
             alertname=parsed.alertname,
+            title=incident.title,
+            severity=incident.severity.value,
+            service=incident.service or "",
         )
 
     incident = await _deduplicate_alert(db, open_incident, parsed, webhook)

@@ -54,3 +54,29 @@ async def alertmanager_webhook(request: Request) -> JSONResponse:
 @app.get("/webhooks/recent")
 async def recent(limit: int = 20) -> dict:
     return {"count": len(_received), "recent": list(reversed(_received[-limit:]))}
+
+
+_notifications: list[dict] = []
+
+
+@app.post("/notifications")
+async def notifications(request: Request) -> JSONResponse:
+    """Generic sink for libs/common/notify.py's WebhookNotifier -- lets the
+    notification integration be live-verified end to end without a real
+    Slack/webhook receiver."""
+    payload = await request.json()
+    entry = {
+        "received_at": datetime.now(timezone.utc).isoformat(),
+        "event": payload.get("event"),
+        "data": payload.get("data"),
+    }
+    _notifications.append(entry)
+    if len(_notifications) > 200:
+        del _notifications[:100]
+    print(json.dumps({"event": "notification_received", "notification_event": entry["event"]}), flush=True)
+    return JSONResponse({"accepted": True})
+
+
+@app.get("/notifications/recent")
+async def notifications_recent(limit: int = 20) -> dict:
+    return {"count": len(_notifications), "recent": list(reversed(_notifications[-limit:]))}
